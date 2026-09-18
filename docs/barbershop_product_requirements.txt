@@ -1,0 +1,510 @@
+BARBERSHOP CRM & AI
+Product Vision & Requirements — Initial Source of Truth
+Version 1.0 | 2026-09-06
+
+1. PRODUCT VISION
+The product is a SaaS system for managing a barbershop.
+Its primary goal is to reduce the owner's/admin's time spent managing appointments
+and customers, while giving customers a convenient self-service experience.
+
+Core value proposition:
+The product sells time. The barber should be able to open the system in the
+morning, immediately understand the day's schedule, and spend much less time
+answering WhatsApp messages, coordinating appointments, and manually managing
+customer data.
+
+AI is an assistant, not the source of truth. Business rules, availability,
+permissions, and database state remain deterministic and controlled by the app.
+
+The project began as a general appointment-management project for an AI Agents
+course, then became a specialized barbershop system with Gemini, ChromaDB and RAG.
+
+2. TARGET CUSTOMER
+Primary customer: an independent barbershop owner/head barber who manages one or
+more additional barbers/staff members. The system should also support adding
+staff later, including different service types such as a women's barber/stylist.
+
+This is NOT a marketplace for discovering random barbershops.
+
+3. BUSINESS / TENANT MODEL
+The barbershop is the business/tenant.
+
+Barbershop
+- Owner / Main Manager
+- Staff / Secondary Barbers
+- Customers
+- Appointments
+- Services
+- Business settings
+- Products (later)
+
+Owner permissions:
+- Manage the entire business
+- View/manage all appointments
+- Manage customers and staff
+- Add/edit/remove/move appointments
+- Configure services, prices, business policies and schedules
+- View business summaries/analytics
+
+Secondary staff permissions:
+- Primarily manage their own calendar
+- View their own working hours and days off
+- Only access information they are authorized to access
+- Must not automatically receive owner-level access
+
+Critical architecture requirement:
+Data belonging to one barbershop must be isolated from every other barbershop.
+
+4. ONBOARDING
+When an owner registers/purchases the system, onboarding should guide them
+through configuring:
+- Business information
+- Staff
+- Services
+- Service duration
+- Service prices
+- Working days/hours
+- Breaks
+- Booking policy
+- Cancellation policy
+- Other business policies
+
+Exact onboarding UX is still to be designed.
+
+5. CUSTOMER TYPES
+Registered Customer:
+- Has an account
+- Can log in
+- Can manage appointments
+- Has a profile and history
+
+Guest / Temporary Customer / Lead:
+- Can book without registering
+- Booking information is stored
+- Business can see them as a lead/customer candidate
+- Later, the temporary record can be linked/merged with the registered account
+
+Matching should use reliable information such as phone number and potentially
+additional verification data. Avoid duplicate customer records.
+
+Current useful tags/statuses:
+- Unregistered / Lead
+- Birthday this month
+
+Guest conversion is part of the long-term CRM/marketing vision. Example:
+a guest books without an account; later the business can send a WhatsApp offer
+encouraging registration, potentially with 10% off the next haircut.
+
+6. CUSTOMER EXPERIENCE
+Customers should have a dedicated interface and be able to:
+- Register/login
+- Book appointments
+- Choose a barber when applicable
+- Choose one or more services
+- View upcoming appointments
+- View appointment history
+- Reschedule/cancel according to policy
+- Ask general business questions
+- Ask about services, prices, hours and policies
+- Use natural language through the customer AI assistant
+
+The customer should not need to wait for the barber to answer WhatsApp for routine
+questions or scheduling.
+
+7. APPOINTMENT MANAGEMENT
+Appointment management is core.
+
+Customers:
+- Book appointments
+- Choose a barber when multiple barbers exist
+- Potentially choose "any available barber" (future design)
+- Choose multiple services
+- Book for multiple people
+- Book up to three months ahead
+
+Owner/barber:
+- Create, edit, move and delete/cancel appointments
+- Create walk-in appointments
+- Override certain scheduling situations as an authorized manager
+
+Manager-created conflicts should generate a warning rather than necessarily
+hard-blocking the action. Exact safeguards need design to prevent mistakes.
+
+Availability must consider:
+- Barber
+- Service duration
+- Working hours
+- Breaks
+- Days off
+- Blocked time
+- Existing appointments
+- Booking window
+- Business closure dates
+- Other scheduling rules
+
+The application, not the LLM, determines actual availability.
+
+8. SERVICES
+Each service should support at least:
+- Name
+- Price
+- Duration
+
+Example:
+Haircut + Beard = 35 minutes / 100 NIS
+Haircut = 25 minutes / configurable price
+
+Owner can create/edit services.
+
+Services are predefined for customers. Authorized staff can make special
+additions, such as adding a hair wash to an appointment. The extra service
+increases duration and must not create a conflict with the next appointment.
+Only the barber/authorized staff can make such an exception.
+
+9. WORKING HOURS / BREAKS / DAYS OFF
+Each barber can have their own availability.
+
+Support:
+- Working days
+- Working hours
+- Breaks
+- Days off
+- Holidays/closure dates
+- One-time blocked periods
+- Different schedules by day
+
+Customers must never be offered slots during unavailable periods.
+
+Future integration with Google Calendar or a similar calendar is desired to
+account for holidays/special events and possible conflicts. Exact integration
+rules are not yet decided.
+
+10. CANCELLATIONS
+Business cancellation policy should be configurable.
+
+Current intended example:
+- Less than 4 hours before the appointment: customer contacts the barber.
+- Barber cancels manually.
+- Otherwise the customer can cancel according to policy.
+- Barber receives a notification when a customer cancels.
+
+11. WAITING LIST
+A waiting list is desired.
+When a slot opens:
+- Consider eligible people on the waiting list
+- Work through the first five in sequence
+- Notify the barber about the opportunity
+
+Exact customer notification/offer flow is still to be designed.
+
+12. APPOINTMENT STATUS
+The system needs enough status to manage the day and record attendance.
+Important states include scheduled/upcoming, completed/attended and cancelled.
+The barber should be able to mark whether the customer showed up.
+
+No-show infrastructure may be prepared, but no-show intelligence is not an
+initial priority. Customer lateness is not a core feature.
+
+13. CUSTOMER CRM
+Core customer data may include:
+- Name
+- Phone
+- Registration status
+- Appointment/visit history
+- Spending/revenue information
+- Next appointment
+- Tags
+- Birthday
+- Optional notes
+
+Potential customer profile:
+David Cohen
+Phone: 050-XXXXXXX
+Visits: 18
+Last visit: 02/09
+Total spent: 1,440 NIS
+Average visit: 80 NIS
+Next appointment: 10/09 17:30
+
+Customer notes are possible but their usefulness should be evaluated.
+Loyalty programs are NOT required initially.
+
+14. BARBER DASHBOARD
+The dashboard should be smart, intuitive and simple.
+
+Minimum goals:
+- Immediately understand today's schedule
+- See upcoming appointments
+- Manage the calendar
+- Create future appointments
+- View appointment history
+- View the previous month's history
+- See useful business summaries
+
+Potential metrics:
+- Today's appointments
+- Remaining appointments
+- Expected revenue
+- Completed appointments
+- Cancellations
+- Available slots
+- Weekly/monthly summaries
+
+The exact first-screen layout is not yet decided and should be researched.
+
+15. REVENUE / ANALYTICS
+Owner should receive business summaries:
+- Expected revenue today/week/month
+- Appointment counts
+- Customer counts
+- New customers
+- Cancellations
+- Other useful KPIs
+
+Distinguish expected revenue from booked appointments and actual revenue from
+completed transactions.
+
+Real payment processing is NOT required initially.
+
+16. PRICE CHANGES
+Current desired behavior:
+- If an appointment is less than one week away when the price changes, preserve
+  the old price for that appointment.
+- If the appointment is more than one week away, notify the customer via WhatsApp
+  that the price changed.
+- Owner can send a general price-update message to customers with an effective date.
+
+17. DURATION CHANGES
+If a service duration changes, the current desired behavior is to update affected
+appointments. This must be implemented carefully because it can create conflicts
+and therefore requires explicit testing.
+
+18. CUSTOMER AI ASSISTANT
+Natural-language customer requests should include examples such as:
+- "Do you have anything available tonight?"
+- "When is my next appointment?"
+- "Cancel my appointment tomorrow."
+- "I want a haircut with Daniel on Thursday."
+- "How much does haircut and beard cost?"
+- "Are you open on Friday?"
+
+The assistant should help with booking, appointment checks, cancellation,
+potential rescheduling, and general business questions.
+
+It must not expose other customers' information.
+If information is unknown, it should say so and direct the customer to the barber.
+It must not invent prices, policies, availability or customer data.
+
+19. CUSTOMER AI AUTHENTICATION / CONFIRMATION
+Sensitive customer data/actions require reasonable identity verification.
+
+Desired balance:
+- Convenient enough for normal users
+- Strong enough to prevent easy unauthorized access
+
+For sensitive actions such as cancellation, use a two-step confirmation flow.
+Security must be enforced by backend identity/authorization, not by prompts alone.
+
+20. BARBER / OWNER AI ASSISTANT
+The owner/barber gets a separate smart assistant.
+
+Potential read-oriented questions:
+- "What appointments do I have today?"
+- "How many customers do I have this week?"
+- "How much revenue is expected this week?"
+- "How many new customers did I get this month?"
+- "Find David."
+- Other useful operational questions
+
+Current decision:
+AI should NOT directly perform destructive/modifying actions.
+Future flow may be:
+AI request -> explicit confirmation -> deterministic business logic -> database.
+
+21. PROACTIVE NOTIFICATIONS
+Fully autonomous proactive AI is not currently required.
+
+Automated non-AI notifications are desired.
+Example:
+"Good morning [Barber Name]. Today you have [X] appointments: ..."
+with the day's appointment list and times.
+
+WhatsApp is the preferred channel. Email may be used where appropriate.
+
+22. WHATSAPP
+Future WhatsApp use cases:
+- Appointment confirmations
+- Cancellation notifications
+- Price-change notifications
+- Morning schedule summaries
+- Guest-to-registered marketing
+- Birthday messages
+- Waiting-list notifications
+- Other business communications
+
+The actual integration is later. Notification delivery should ideally be
+abstracted so WhatsApp is not hard-coded throughout business logic.
+
+23. PAYMENTS / INVOICES
+Long-term vision:
+Appointment -> Service completed -> Payment -> Invoice -> Customer history -> Actual revenue
+
+Initial version:
+- Prepare useful underlying architecture
+- Demonstrate the flow
+- Do not implement real payment processing yet
+
+24. PRODUCTS / INVENTORY
+Future capability, not initial priority.
+
+Possible future data:
+- Product name
+- Price
+- Quantity
+- Inventory
+- Sales
+- Revenue/profit analysis
+
+Do not overbuild inventory initially.
+
+25. GOOGLE CALENDAR / EXTERNAL CALENDARS
+Future integration with Google Calendar or similar.
+Goals:
+- Recognize holidays/special events
+- Account for calendar conflicts
+- Adjust availability when appropriate
+
+Exact synchronization rules remain undecided.
+
+26. MARKETING / CUSTOMER RETENTION
+Long-term opportunities:
+- Guest registration campaigns
+- Birthday campaigns
+- Re-engagement of inactive customers
+- General price-update announcements
+
+Current tags:
+- Leads/unregistered
+- Birthday this month
+
+Advanced loyalty/retention is not initial scope.
+
+27. ARCHITECTURAL PRINCIPLES
+1. Database and deterministic Python/business logic are the source of truth.
+2. LLM is a language/interface layer, not the authority over business rules.
+3. Availability is calculated deterministically.
+4. Permissions are enforced by the backend.
+5. AI receives only authorized data.
+6. Never rely on prompts alone for security.
+7. Destructive actions require explicit confirmation.
+8. Multi-tenancy is an architectural requirement.
+9. Introduce features incrementally and test them.
+10. Avoid unnecessary AI calls when deterministic code is enough.
+11. Prepare abstractions for future integrations without implementing everything now.
+12. Keep clear separation between CRM, appointment logic, auth, AI/NLU, RAG and notifications.
+
+28. MVP / HIGH PRIORITY
+- Multi-tenant business model
+- Owner/admin and staff roles
+- Authentication/authorization
+- Customer management
+- Registered and guest customers
+- Guest-to-registered linking
+- Appointment calendar
+- Services, duration and pricing
+- Working hours, breaks and days off
+- Booking up to three months ahead
+- Customer booking
+- Barber-created appointments
+- Walk-ins
+- Appointment editing/moving/cancellation
+- Basic appointment status
+- Waiting-list foundation
+- Customer history
+- Basic dashboard
+- Basic expected revenue
+- Customer AI assistant
+- Barber/owner read AI assistant
+- AI authorization/safety boundaries
+- Basic notification architecture
+
+29. LATER
+- Real WhatsApp integration
+- Google Calendar integration
+- Automated marketing
+- Birthday campaigns
+- Real payments
+- Invoices
+- Product inventory
+- Advanced analytics
+- Loyalty programs
+- No-show intelligence
+- AI actions with confirmation
+- Advanced retention features
+- Advanced proactive AI
+
+30. OPEN DECISIONS
+- Exact dashboard layout and first-screen hierarchy
+- Exact onboarding flow
+- Exact customer authentication method
+- Exact guest-to-registered merge algorithm
+- Exact waiting-list notification flow
+- Exact manager conflict-warning UX
+- Exact behavior when duration changes affect appointments
+- Exact "any available barber" behavior
+- Exact multi-person booking UX
+- Google Calendar synchronization rules
+- WhatsApp provider/integration
+- Notification templates and consent model
+- Payment/invoice architecture
+- Analytics/KPI set
+- AI tool permissions and confirmation framework
+- Detailed owner vs staff permission matrix
+- What the first action on opening the app should be
+
+31. DEVELOPMENT AUDIT PLAN
+Before adding major features, compare this document against the existing code.
+
+Classify every major area:
+KEEP = correct and aligned
+REFACTOR = useful but architecturally needs improvement
+REPLACE = conflicts with intended architecture/product
+REMOVE = legacy/duplicate/unnecessary
+MISSING = required but not implemented
+
+Audit order:
+1. Frontend
+2. FastAPI routes
+3. Authentication/authorization
+4. Appointment/business logic
+5. CRUD/data access
+6. Database/schema
+7. Customer CRM
+8. Multi-tenancy
+9. AI/NLU
+10. State machine
+11. RAG/ChromaDB
+12. Notifications
+13. Tests
+14. Security
+15. Deployment readiness
+
+Do not add major new features until the current implementation and source of
+truth are understood.
+
+32. WORKING METHOD
+For every major change:
+1. Understand existing implementation.
+2. Explain the concepts simply.
+3. Compare implementation to product requirements.
+4. Decide KEEP / REFACTOR / REPLACE / REMOVE / BUILD.
+5. Implement the smallest appropriate change.
+6. Run tests.
+7. Verify regressions.
+8. Document important architectural decisions.
+9. Move forward.
+
+The project is both a real product intended for commercial use and a learning
+project in which the developer should understand what is being built.
+
+END OF INITIAL PRODUCT REQUIREMENTS

@@ -1,0 +1,502 @@
+# Barbershop CRM — Conversation Context Archive
+# Curated recovery context, not a literal transcript of every chat message.
+
+## Project Identity
+
+Project: GB Barbershop CRM & AI / Barbershop CRM
+Type: SaaS for barbershops
+Primary development stack: Python + FastAPI + SQLite + vanilla HTML/CSS/JS
+AI direction: Gemini/NLU + ChromaDB/RAG, with strict deterministic backend control
+
+## User's Working Expectations
+
+- Act as architect/reviewer/teacher, not a blind code generator.
+- Be professional and candid.
+- Explain technical terms instead of assuming the user already understands them.
+- Keep architecture simple but smart.
+- Avoid overengineering and unnecessary files.
+- Prefer short, understandable tasks.
+- User should understand what changed and why.
+- Tests are required after meaningful implementation changes.
+- Do not jump ahead after a milestone; stop and let the user choose.
+- If information is missing or current state is uncertain, inspect/search rather than guess.
+- The user wants to control project mutations. Do not silently edit their project.
+- Current workflow is directly: assistant explains/decides/gives code → user inserts code → user runs tests → user returns results → assistant reviews → continue.
+- Do not introduce Gemini/Codex as an intermediary workflow tool.
+
+## Product Vision
+
+The product is intended to save barbershop owners/staff time, especially by reducing manual appointment coordination through WhatsApp and providing a clear morning/day dashboard.
+
+It is not a marketplace.
+
+Each barbershop is a tenant/business. Tenant isolation is mandatory.
+
+Owner/Manager has broad control. Staff/barbers have scoped access.
+
+## Core Product Requirements
+
+Onboarding should configure:
+- business information
+- staff
+- services
+- service duration
+- service price
+- working hours
+- breaks
+- booking/cancellation policies
+
+Customer types:
+- registered customers
+- guests/temporary customers/leads
+
+Guests should be able to book without full registration. Later linking/merging must use reliable identity/verification and avoid duplicate customers.
+
+Appointments:
+- multiple services per appointment
+- potentially multiple people
+- booking up to 3 months ahead
+- walk-ins
+- edit/move/cancel
+- basic status tracking
+- conflict handling still has an unresolved manager-UX question
+
+Services can have staff-specific availability and duration/price overrides.
+
+Working schedules include:
+- business hours
+- staff hours
+- breaks
+- days off
+- closures
+- blocks
+
+Cancellation policy is configurable. Example default direction: less than 4 hours may require contacting the barber.
+
+Waitlist:
+- first eligible matches
+- service/staff/date/time-window matching
+- notify/offer rather than silently auto-book
+
+CRM includes:
+- name
+- phone
+- registration status
+- history
+- spending/revenue
+- next appointment
+- tags
+- birthday
+- optional notes
+
+Dashboard should expose:
+- today's schedule
+- upcoming appointments
+- calendar/future bookings
+- history
+- summaries
+- expected booked revenue vs actual completed revenue
+
+Price rule:
+- appointment more than one week away can receive a new price and notification
+- appointment within one week retains its existing price
+
+Customer AI:
+- natural-language booking/check/cancel/general questions
+- no unauthorized customer data
+- unknown information => say unknown/direct customer to barber
+- no invented facts
+- sensitive actions require verification
+- cancellation should use two-step confirmation
+- backend enforces authorization/security
+
+Owner/barber AI:
+- separate read-oriented assistant initially
+- no destructive/modifying actions initially
+- future modifying actions require explicit confirmation then deterministic execution
+
+Notifications:
+- proactive deterministic morning summary
+- WhatsApp preferred
+- email alternative
+
+Future:
+- WhatsApp integration
+- Google Calendar
+- payments/invoices
+- inventory
+- marketing
+- analytics
+- loyalty
+- more advanced AI actions
+
+## Old Project Audit Lessons
+
+The original project had useful foundations but serious structural problems:
+- hardcoded admin password
+- missing route-level authorization
+- customer token equal to customer ID
+- divergent auth implementations
+- missing tenant isolation
+- schema drift
+- many patch/fix scripts
+- multiple AI systems
+- admin AI receiving excessive DB context
+- client-controlled session weaknesses
+- missing guest architecture
+- price snapshot foundation not reliably populated
+- incomplete appointment engine
+- frontend hardcoded staff ID
+- OTP/frontend route mismatch
+- exposed secret in `.env`
+- RAG paths lacking robust tenant scoping
+- misleading/fake revenue projection
+- tests had environment/collection issues
+
+The old ZIP is a reference/backup and should not be mutated casually.
+
+## Clean Architecture Direction
+
+Target simple structure:
+
+app/
+- main.py
+- api/
+- core/
+- db/
+- services/
+- ai/
+
+frontend/
+knowledge/
+tests/
+scripts/
+docs/
+
+Current clean project has also added `exceptions/` because concrete domain exceptions justified it.
+
+## Database Foundation
+
+Canonical schema:
+`app/db/schema.sql`
+
+Tenant root:
+`businesses`
+
+Relevant tables:
+- businesses
+- staff
+- customers
+- services
+- staff_services
+- business_working_hours
+- working_hours
+- schedule_breaks
+- schedule_blocks
+- appointments
+- appointment_items
+- waitlist
+- business_settings
+- conversation_sessions
+
+The schema enforces important cross-tenant relationships through `business_id` and composite foreign keys.
+
+## Connection / Repository Lesson
+
+A test initially held an open SQLite connection while the repository opened its own connection, causing locking/transaction problems.
+
+Decision:
+- test/service supplies connection
+- repository uses supplied connection
+- repository does not commit/rollback
+- service owns transaction boundary
+
+This is both cleaner architecture and easier to test.
+
+## Customer Domain Milestone
+
+Customer repository includes operations for:
+- create
+- get
+- list
+- update
+- find by phone
+- deactivate
+
+Customer service and exception tests are green.
+
+## Appointment Repository Milestone
+
+Appointment Repository provides the persistence operations required by the Appointment Domain.
+
+Current functions:
+- `create_appointment()`
+- `get_staff()`
+- `get_active_staff_for_service()`
+- `get_services_by_ids()`
+- `get_staff_service()`
+
+`create_appointment()` creates:
+- appointment
+- all appointment items
+
+as one logical persistence operation.
+
+It accepts:
+- business_id
+- customer_id
+- staff_id
+- start_datetime
+- end_datetime
+- status
+- notes
+- list of item dictionaries
+
+Each item includes:
+- service_id
+- service_name
+- duration_minutes
+- price
+
+Repository responsibilities:
+- tenant-scoped database access
+- appointment + appointment-item persistence
+- staff lookup
+- active staff/service compatibility lookup
+- active service lookup
+- staff-specific service configuration lookup
+
+Repository does NOT:
+- decide business rules
+- calculate final booking availability
+- resolve service defaults
+- determine authorization
+- own transactions
+- commit or rollback
+
+`get_staff_service()` intentionally returns NULL duration/price overrides as stored. Fallback to service defaults belongs to the higher business-logic layer.
+
+Repository tests cover:
+1. appointment + multiple appointment items
+2. repository does not commit automatically
+3. staff lookup within the correct business
+4. tenant isolation for staff lookup
+5. active staff/service compatibility
+6. inactive staff exclusion
+7. active service lookup
+8. tenant isolation for service lookup
+9. empty service list behavior
+10. staff-specific duration/price configuration
+11. preservation of NULL overrides
+
+The Appointment Repository milestone is considered complete.
+
+## Scheduling Repository Milestone
+
+Scheduling Repository provides the persistence operations required by the Availability/Scheduling layer.
+
+Current functions:
+- `get_business_working_hours()`
+- `get_staff_working_hours()`
+- `get_schedule_breaks()`
+- `get_schedule_blocks()`
+- `get_staff_appointments()`
+- `get_business_settings()`
+
+Repository responsibilities:
+- retrieve business/staff schedule data
+- retrieve schedule breaks and blocks
+- retrieve overlapping non-cancelled staff appointments
+- retrieve business settings
+- preserve tenant/staff scope
+
+Repository does NOT:
+- decide final availability
+- calculate booking duration or price
+- create appointments
+- own business-rule decisions
+
+Scheduling Repository tests cover:
+- correct retrieval
+- business/staff isolation
+- missing schedule rows
+- ordered breaks
+- business-wide and staff-specific blocks
+- overlap/non-overlap behavior
+- cancelled appointment exclusion
+- settings isolation
+- empty-result behavior
+
+Verification:
+- Scheduling Repository tests: **23 passed**
+- Full regression at that milestone: **44 passed, 0 failed**
+
+The Scheduling Repository milestone is considered complete.
+
+## Appointment Domain Design
+
+Appointment:
+- business_id
+- customer_id
+- staff_id
+- start_datetime
+- end_datetime
+- status
+- notes
+- appointment_items
+
+Appointment Item:
+- service_id
+- service_name
+- duration_minutes
+- price
+
+The Appointment Service must eventually:
+- validate customer
+- validate staff
+- validate services
+- determine staff-service compatibility
+- derive duration and price
+- calculate end time
+- enforce booking window
+- call availability
+- create appointment atomically
+- handle errors consistently
+
+Availability must not create appointments.
+
+## Availability Engine Milestone
+
+The Availability Engine is now implemented in `app/services/availability.py`.
+
+Its responsibility is deterministic availability evaluation. It does not create appointments and does not own persistence.
+
+The engine:
+- resolves eligible staff
+- validates staff-service compatibility
+- calculates service duration from configuration and staff overrides
+- evaluates business working hours
+- evaluates staff working hours
+- evaluates breaks
+- evaluates business-wide and staff-specific blocks
+- evaluates existing non-cancelled appointments
+- evaluates real free windows
+- returns a structured availability result
+
+It supports:
+- `SPECIFIC` staff selection
+- `ANY + AUTO`
+- `ANY + CHOICE` behavior as currently implemented
+- multiple services
+- real appointment durations
+- interval-overlap semantics
+
+Cancelled appointments do not block availability.
+
+### Critical Scheduling Decision
+
+Booking Interval is a preferred display/start-time interval, not a hard availability grid.
+
+The engine must work from real free windows. If an existing appointment ends at a non-grid boundary and the requested service fits after it, that actual boundary can be a legal next start. The system must not create artificial gaps simply to force appointments onto a fixed 15/30/60-minute grid.
+
+This is important for preserving schedule capacity and avoiding wasted holes.
+
+### Availability Tests
+
+Dedicated tests were added in `tests/test_availability.py`.
+
+Coverage includes:
+- default service duration
+- staff duration override
+- fit inside hours
+- closed business day
+- staff not working
+- breaks
+- staff-specific block
+- business-wide block
+- overlapping appointment
+- cancelled appointment does not block
+- unsupported service
+- multiple services
+- `ANY + AUTO`
+- `ANY` with no available staff
+- `ANY + CHOICE`
+- no eligible staff
+- unknown service
+- invalid datetime
+- past datetime
+- empty service list
+- invalid staff selection
+- real free-window start after an existing appointment
+- no fixed hard time grid
+
+Latest verification:
+- Availability Engine tests: **23 passed**
+- Full regression suite: **67 passed, 0 failed**
+- No regression detected.
+
+The Availability Engine milestone is considered complete.
+
+## Important Technical Definitions
+
+Repository:
+database access code.
+
+Service:
+business-rule layer.
+
+Transaction:
+a group of DB operations that either all succeed or all roll back.
+
+Availability Engine:
+deterministic component that decides whether a requested appointment interval is legal/bookable based on the current scheduling data.
+
+NLU:
+Natural Language Understanding — converting natural-language input into structured intent/data.
+
+RAG:
+Retrieval-Augmented Generation — retrieving relevant knowledge before generating an AI response. It must not become a source of authorization or database truth.
+
+Tenant:
+one isolated business/customer organization inside the SaaS.
+
+## Current Next Step
+
+**Appointment Service — Contract Design**
+
+Expected process:
+1. inspect current Appointment Repository, Scheduling Repository, Availability Engine, and product requirements
+2. define Appointment Service responsibility
+3. define input/output contract
+4. define duration/price resolution
+5. define booking-window enforcement
+6. define how Appointment Service calls Availability Engine
+7. define transaction and final concurrency protection
+8. define service-level errors
+9. design focused tests
+10. review/approve contract
+11. implement
+12. run full regression
+13. update checkpoints if milestone is complete
+14. stop
+
+## Context Safety Rule
+
+When a meaningful milestone is reached, the assistant should proactively say that this is a checkpoint and ask/prepare to update the context files.
+
+The three files have different roles:
+- PROJECT_STATE.md = current GPS
+- ARCHITECTURE_DECISIONS.md = why
+- CONVERSATION_CONTEXT.txt = broader recovery context
+
+If they disagree with actual code, actual code must be inspected and the discrepancy resolved; never silently assume.
+
+## Important Limitation
+
+These files are a recovery mechanism, not a literal backup of every chat message.
+
+For a complete verbatim transcript, use ChatGPT's official data export. The curated context file exists so the project can resume intelligently without rereading an enormous transcript.
+
+## Architecture Guidance
+
+Choose Python/project structure based on actual responsibility, state, complexity, testability, and maintainability. Do not introduce classes, files, abstractions, interfaces, or patterns merely because they were mentioned or because they appear more professional.
