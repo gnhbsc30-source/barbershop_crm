@@ -9,13 +9,16 @@
 
 **Current milestone:** Appointment Service vertical slice completed and verified.
 
-**Next planned milestone:** Add booking-window/minimum-notice policy only after the relevant settings and product contract are defined.
+**Next milestone:** To be selected after review. Likely candidates are Booking window + minimum notice or Alternative Discovery, according to the agreed product priority.
 
 **STOP RULE:** Do not start the next milestone until the current milestone is explicitly considered complete and the user agrees to continue.
 
 ## 2. Current Verified State
 
-The clean project is `barbershop_crm_clean`.
+The reviewed project is `barbershop_crm`.
+
+Local project path:
+- `/Users/aminadavyamin/Documents/Projects/barbershop_crm`
 
 Current relevant structure:
 - `app/core/`
@@ -33,9 +36,15 @@ Current relevant structure:
 
 Latest known test result:
 - **23 Availability Engine tests passed**
-- **67 tests passed, 0 failed — full regression suite**
+- **75 tests passed, 0 failed — full regression suite**
 - No regression detected in the previously green tests.
-- Tests cover Customer Domain, Appointment Repository, Scheduling Repository, and Availability Engine.
+- Tests cover Customer Domain, Appointment Repository, Scheduling Repository, Availability Engine, and Appointment Service.
+
+Git checkpoint:
+- Branch: `main`
+- Commit: `7bc845c1c44d4d5ef9bd10b6ebd355a84e87a735`
+- GitHub: https://github.com/gnhbsc30-source/barbershop_crm
+- Working tree: clean at this checkpoint.
 
 ## 3. What Has Been Completed
 
@@ -106,7 +115,7 @@ Latest known test result:
 - It builds real free windows rather than treating a fixed time grid as a hard availability constraint.
 - A cancelled appointment does not block availability.
 - The engine rejects invalid, past, or otherwise unsupported requests according to its current contract.
-- Booking-window enforcement and richer future slot-search/ranking behavior remain separate concerns to be completed where required by the higher-level Appointment Service/product flow.
+- Booking-window enforcement and richer future slot-search/ranking behavior remain separate concerns for future product work.
 
 ### Availability Testing
 Dedicated Availability Engine tests cover:
@@ -136,18 +145,28 @@ Dedicated Availability Engine tests cover:
 
 ### Appointment Service
 - `app/services/appointments.py` is the business orchestration layer for booking.
-- It validates customer, staff, service, tenant scope and input date/time.
+- It validates customer, staff, service, tenant scope, active staff status, staff-service compatibility, and input date/time.
 - It resolves staff-service duration/price overrides, falling back independently to service defaults.
 - It calculates `end_datetime`, total duration and total price on the server.
 - It checks deterministic availability before the critical section and once more inside it.
 - The DB-layer `transaction()` context owns SQLite locking/commit/rollback; the service contains no SQLite command and repositories still do not commit or rollback.
 - `ANY + CHOICE` is discovery only and cannot create a booking. `ANY + AUTO` needs the explicit `allow_auto_assign=True` delegation flag.
-- Appointment and item snapshots are created together.
+- Appointment and item snapshots are created atomically; items preserve service name, duration, and price snapshots.
 
-Latest verification (2026-09-17):
-- **Appointment Service + Appointment Repository tests: 20 passed**
-- **Full suite: 54 passed, 20 failed**
-- All 20 failures predate this milestone: they use the fixed date `2026-09-14`, which is now in the past and correctly returns `PAST_DATETIME`. Their fixtures should be made date-relative in a dedicated maintenance change.
+Latest verification:
+- **Stage 27 Appointment Service completed and reviewed.**
+- Availability tests use a reusable future-Monday helper rather than brittle hardcoded dates.
+- **Availability suite: 23 passed**
+- **Full suite: 75 passed, 0 failed**
+
+Not implemented yet:
+- production database migration (SQLite remains temporary)
+- Alternative Discovery
+- booking-window rules
+- minimum booking notice
+- cancellation
+- rescheduling
+- timezone hardening
 
 ## 4. Important Architecture Decisions
 
@@ -299,26 +318,14 @@ Still unresolved unless explicitly changed later:
 - complete booking-window enforcement at the higher-level Appointment Service
 - timezone handling strategy for all scheduling flows
 
-## 10. Immediate Next Step
+## 10. Next Milestone Selection
 
-**Appointment Service — Contract Design**
+Stage 27 (Appointment Service) is complete and reviewed. Do not invent or begin a Stage 28 implementation automatically.
 
-The Appointment Repository, Scheduling Repository, and Availability Engine milestones are complete and verified.
+The next milestone should be selected after review, with likely candidates:
+- Booking window + minimum notice
+- Alternative Discovery
 
-Verified:
-- Scheduling Repository: **23 passed**
-- Availability Engine: **23 passed**
-- Full test suite: **67 passed, 0 failed**
-- No regression detected.
+The selection depends on the agreed product priority.
 
-Before implementation:
-- define the Appointment Service responsibility boundary
-- define its input/output contract
-- define duration/price resolution and appointment-item creation
-- define booking-window enforcement
-- define how it calls Availability Engine
-- define transaction and final concurrency protection
-- define service-level error handling
-- design focused tests
-
-**STOP:** Do not implement the Appointment Service until its contract is explicitly reviewed and approved.
+**STOP:** Do not begin either candidate until its contract is explicitly reviewed and approved.
