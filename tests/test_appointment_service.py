@@ -60,6 +60,72 @@ def add_service(connection, business_id, staff_id, name, duration, price, *, ove
     return service_id
 
 
+def set_booking_policy(connection, business_id, *, booking_window_months=3, minimum_booking_notice_minutes=0):
+    connection.execute(
+        """
+        INSERT INTO business_settings (
+            business_id,
+            booking_window_months,
+            minimum_booking_notice_minutes
+        )
+        VALUES (?, ?, ?)
+        ON CONFLICT(business_id) DO UPDATE SET
+            booking_window_months = excluded.booking_window_months,
+            minimum_booking_notice_minutes = excluded.minimum_booking_notice_minutes
+        """,
+        (business_id, booking_window_months, minimum_booking_notice_minutes),
+    )
+
+
+def make_day_bookable(connection, business_id, staff_id, appointment_start):
+    schema_day = (appointment_start.weekday() + 1) % 7
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO business_working_hours (
+            business_id, day_of_week, start_time, end_time
+        )
+        VALUES (?, ?, ?, ?)
+        """,
+        (business_id, schema_day, "09:00", "18:00"),
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO working_hours (
+            staff_id, day_of_week, start_time, end_time
+        )
+        VALUES (?, ?, ?, ?)
+        """,
+        (staff_id, schema_day, "09:00", "18:00"),
+    )
+
+
+def setup_stage_28_request(connection):
+    business_id, customer_id, staff_id, _ = setup_bookable_request(connection)
+    service_id = add_service(connection, business_id, staff_id, "Haircut", 45, 80.0)
+    return business_id, customer_id, staff_id, service_id
+
+
+def book_stage_28_request(
+    connection,
+    *,
+    business_id,
+    customer_id,
+    staff_id,
+    service_id,
+    start_datetime,
+    now,
+):
+    make_day_bookable(connection, business_id, staff_id, start_datetime)
+    connection.commit()
+    return AppointmentService(connection, now_provider=lambda: now).book(
+        business_id=business_id,
+        customer_id=customer_id,
+        start_datetime=start_datetime.isoformat(),
+        service_ids=[service_id],
+        staff_selection={"type": "SPECIFIC", "staff_id": staff_id},
+    )
+
+
 def test_resolve_uses_each_staff_override_or_service_default(test_database):
     business_id, customer_id, staff_id, appointment_start = setup_bookable_request(test_database)
     haircut_id = add_service(test_database, business_id, staff_id, "Haircut", 45, 80.0, override_duration=60)
@@ -193,3 +259,154 @@ def test_book_allows_any_auto_only_when_explicitly_authorized(test_database):
     )
 
     assert result.staff_id == staff_id
+
+
+def test_book_allows_start_inside_booking_window(test_database):
+    business_id, customer_id, staff_id, service_id = setup_stage_28_request(test_database)
+    policy_now = datetime(2027, 1, 15, 10, 0)
+    start = datetime(2027, 2, 15, 10, 0)
+    set_booking_policy(test_database, business_id, booking_window_months=3)
+
+    result = book_stage_28_request(
+        test_database,
+        business_id=business_id,
+        customer_id=customer_id,
+        staff_id=staff_id,
+        service_id=service_id,
+        start_datetime=start,
+        now=policy_now,
+    )
+
+    assert result.start_datetime == start.isoformat()
+
+
+def test_book_allows_exact_booking_window_boundary(test_database):
+    business_id, customer_id, staff_id, service_id = setup_stage_28_request(test_database)
+    policy_now = datetime(2027, 1, 15, 10, 0)
+    start = datetime(2027, 4, 15, 10, 0)
+    set_booking_policy(test_database, business_id, booking_window_months=3)
+
+    result = book_stage_28_request(
+        test_database,
+        business_id=business_id,
+        customer_id=customer_id,
+        staff_id=staff_id,
+        service_id=service_id,
+        start_datetime=start,
+        now=policy_now,
+    )
+
+    assert result.start_datetime == start.isoformat()
+
+
+def test_booking_window_uses_calendar_month_end_clamping(test_database):
+    business_id, customer_id, staff_id, service_id = setup_stage_28_request(test_database)
+    policy_now = datetime(2027, 1, 31, 10, 0)
+    start = datetime(2027, 2, 28, 10, 0)
+    set_booking_policy(test_database, business_id, booking_window_months=1)
+
+    result = book_stage_28_request(
+        test_database,
+        business_id=business_id,
+        customer_id=customer_id,
+        staff_id=staff_id,
+        service_id=service_id,
+        start_datetime=start,
+        now=policy_now,
+    )
+
+    assert result.start_datetime == start.isoformat()
+
+
+def test_book_allows_minimum_notice_zero(test_database):
+    business_id, customer_id, staff_id, service_id = setup_stage_28_request(test_database)
+    policy_now = datetime(2027, 1, 15, 10, 0)
+    start = datetime(2027, 1, 15, 10, 1)
+    set_booking_policy(test_database, business_id, minimum_booking_notice_minutes=0)
+
+    result = book_stage_28_request(
+        test_database,
+        business_id=business_id,
+        customer_id=customer_id,
+        staff_id=staff_id,
+        service_id=service_id,
+        start_datetime=start,
+        now=policy_now,
+    )
+
+    assert result.start_datetime == start.isoformat()
+
+
+def test_book_allows_exact_minimum_notice_boundary(test_database):
+    business_id, customer_id, staff_id, service_id = setup_stage_28_request(test_database)
+    policy_now = datetime(2027, 1, 15, 10, 0)
+    start = datetime(2027, 1, 15, 10, 30)
+    set_booking_policy(test_database, business_id, minimum_booking_notice_minutes=30)
+
+    result = book_stage_28_request(
+        test_database,
+        business_id=business_id,
+        customer_id=customer_id,
+        staff_id=staff_id,
+        service_id=service_id,
+        start_datetime=start,
+        now=policy_now,
+    )
+
+    assert result.start_datetime == start.isoformat()
+
+
+@pytest.mark.parametrize(
+    ("start", "policy_now", "booking_window_months", "minimum_booking_notice_minutes", "error_code"),
+    [
+        (
+            datetime(2027, 1, 15, 9, 59),
+            datetime(2027, 1, 15, 10, 0),
+            3,
+            30,
+            "PAST_DATETIME",
+        ),
+        (
+            datetime(2027, 1, 15, 10, 29),
+            datetime(2027, 1, 15, 10, 0),
+            3,
+            30,
+            "MINIMUM_BOOKING_NOTICE_VIOLATION",
+        ),
+        (
+            datetime(2027, 4, 15, 10, 1),
+            datetime(2027, 1, 15, 10, 0),
+            3,
+            0,
+            "BOOKING_WINDOW_EXCEEDED",
+        ),
+    ],
+)
+def test_booking_policy_rejections_create_no_appointment(
+    test_database,
+    start,
+    policy_now,
+    booking_window_months,
+    minimum_booking_notice_minutes,
+    error_code,
+):
+    business_id, customer_id, staff_id, service_id = setup_stage_28_request(test_database)
+    set_booking_policy(
+        test_database,
+        business_id,
+        booking_window_months=booking_window_months,
+        minimum_booking_notice_minutes=minimum_booking_notice_minutes,
+    )
+    test_database.commit()
+
+    with pytest.raises(AppointmentBookingError, match=error_code):
+        AppointmentService(test_database, now_provider=lambda: policy_now).book(
+            business_id=business_id,
+            customer_id=customer_id,
+            start_datetime=start.isoformat(),
+            service_ids=[service_id],
+            staff_selection={"type": "SPECIFIC", "staff_id": staff_id},
+        )
+
+    count = test_database.execute("SELECT COUNT(*) AS count FROM appointments").fetchone()["count"]
+    assert count == 0

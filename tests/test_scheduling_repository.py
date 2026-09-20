@@ -1,3 +1,7 @@
+import sqlite3
+
+import pytest
+
 from app.db.repositories import (
     get_business_settings,
     get_business_working_hours,
@@ -732,6 +736,7 @@ def test_get_business_settings_returns_correct_settings(test_database):
     assert result == {
         "business_id": business_id,
         "booking_window_months": 3,
+        "minimum_booking_notice_minutes": 0,
         "cancellation_cutoff_hours": 4,
         "allow_guest_booking": 1,
         "allow_customer_reschedule": 1,
@@ -770,3 +775,31 @@ def test_get_business_settings_returns_none_when_missing(test_database):
     result = get_business_settings(test_database, business_id)
 
     assert result is None
+
+
+@pytest.mark.parametrize(
+    ("booking_window_months", "minimum_booking_notice_minutes"),
+    [
+        (0, 0),
+        (3, -1),
+    ],
+)
+def test_business_settings_validate_booking_policy_values(
+    test_database,
+    booking_window_months,
+    minimum_booking_notice_minutes,
+):
+    business_id = create_business(test_database, "Test Business")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        test_database.execute(
+            """
+            INSERT INTO business_settings (
+                business_id,
+                booking_window_months,
+                minimum_booking_notice_minutes
+            )
+            VALUES (?, ?, ?)
+            """,
+            (business_id, booking_window_months, minimum_booking_notice_minutes),
+        )

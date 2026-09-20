@@ -401,6 +401,8 @@ CREATE TABLE business_settings (
     business_id INTEGER NOT NULL,
     booking_window_months INTEGER NOT NULL DEFAULT 3
         CHECK (booking_window_months > 0),
+    minimum_booking_notice_minutes INTEGER NOT NULL DEFAULT 0
+        CHECK (minimum_booking_notice_minutes >= 0),
     cancellation_cutoff_hours INTEGER NOT NULL DEFAULT 4
         CHECK (cancellation_cutoff_hours >= 0),
     allow_guest_booking INTEGER NOT NULL DEFAULT 1

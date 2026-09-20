@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 
 from app.db.database import transaction
 from app.db.repositories import (
     create_appointment,
     get_customer,
+    get_business_settings,
     get_services_by_ids,
     get_staff,
     get_staff_service,
@@ -45,8 +47,13 @@ class AppointmentBookingResult:
 class AppointmentService:
     """Orchestrate deterministic appointment booking rules."""
 
-    def __init__(self, connection: Any):
+    def __init__(
+        self,
+        connection: Any,
+        now_provider: Callable[[], datetime] | None = None,
+    ):
         self.connection = connection
+        self._now_provider = now_provider or datetime.now
 
     def book(
         self,
@@ -76,6 +83,11 @@ class AppointmentService:
         )
         total_duration, total_price = self.totals(items)
         requested_end = requested_start + timedelta(minutes=total_duration)
+
+        self._ensure_booking_policy(
+            business_id=business_id,
+            requested_start=requested_start,
+        )
 
         self._ensure_available(
             connection=self.connection,
@@ -205,6 +217,47 @@ class AppointmentService:
             sum(item.duration_minutes for item in items),
             sum(item.price for item in items),
         )
+
+    def _ensure_booking_policy(
+        self,
+        *,
+        business_id: int,
+        requested_start: datetime,
+    ) -> None:
+        """Apply business booking-window and minimum-notice rules."""
+        settings = get_business_settings(self.connection, business_id)
+        booking_window_months = (
+            settings["booking_window_months"] if settings else 3
+        )
+        minimum_booking_notice_minutes = (
+            settings["minimum_booking_notice_minutes"] if settings else 0
+        )
+        now = self._now_provider()
+
+        if requested_start < now:
+            raise AppointmentBookingError("PAST_DATETIME")
+
+        earliest_allowed_start = now + timedelta(
+            minutes=minimum_booking_notice_minutes
+        )
+        if requested_start < earliest_allowed_start:
+            raise AppointmentBookingError("MINIMUM_BOOKING_NOTICE_VIOLATION")
+
+        latest_allowed_start = self._add_calendar_months(
+            now,
+            booking_window_months,
+        )
+        if requested_start > latest_allowed_start:
+            raise AppointmentBookingError("BOOKING_WINDOW_EXCEEDED")
+
+    @staticmethod
+    def _add_calendar_months(value: datetime, months: int) -> datetime:
+        """Add whole calendar months while clamping invalid month-end dates."""
+        month_index = value.month - 1 + months
+        year = value.year + month_index // 12
+        month = month_index % 12 + 1
+        day = min(value.day, calendar.monthrange(year, month)[1])
+        return value.replace(year=year, month=month, day=day)
 
     def _resolve_selected_staff(
         self,
