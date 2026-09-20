@@ -7,9 +7,9 @@
 
 **Phase:** Clean Architecture Foundation → Appointment Domain
 
-**Current milestone:** Appointment Service vertical slice completed and verified.
+**Current milestone:** Stage 28 — Booking Window + Minimum Booking Notice completed, reviewed, merged into `main`, and verified.
 
-**Next milestone:** To be selected after review. Likely candidates are Booking window + minimum notice or Alternative Discovery, according to the agreed product priority.
+**Next milestone:** Stage 29 — Alternative Discovery.
 
 **STOP RULE:** Do not start the next milestone until the current milestone is explicitly considered complete and the user agrees to continue.
 
@@ -36,13 +36,13 @@ Current relevant structure:
 
 Latest known test result:
 - **23 Availability Engine tests passed**
-- **75 tests passed, 0 failed — full regression suite**
+- **85 tests passed, 0 failed — full regression suite**
 - No regression detected in the previously green tests.
 - Tests cover Customer Domain, Appointment Repository, Scheduling Repository, Availability Engine, and Appointment Service.
 
 Git checkpoint:
 - Branch: `main`
-- Commit: `7bc845c1c44d4d5ef9bd10b6ebd355a84e87a735`
+- Latest merge commit: `9c52973266e2d681be1d97201caf016e42de4c8b`
 - GitHub: https://github.com/gnhbsc30-source/barbershop_crm
 - Working tree: clean at this checkpoint.
 
@@ -115,7 +115,7 @@ Git checkpoint:
 - It builds real free windows rather than treating a fixed time grid as a hard availability constraint.
 - A cancelled appointment does not block availability.
 - The engine rejects invalid, past, or otherwise unsupported requests according to its current contract.
-- Booking-window enforcement and richer future slot-search/ranking behavior remain separate concerns for future product work.
+- Booking-window enforcement remains outside the Availability Engine; it is enforced by AppointmentService before the initial availability check. Richer future slot-search/ranking behavior remains separate work.
 
 ### Availability Testing
 Dedicated Availability Engine tests cover:
@@ -149,21 +149,26 @@ Dedicated Availability Engine tests cover:
 - It resolves staff-service duration/price overrides, falling back independently to service defaults.
 - It calculates `end_datetime`, total duration and total price on the server.
 - It checks deterministic availability before the critical section and once more inside it.
+- It enforces tenant-scoped booking policy before the initial availability check:
+  - `booking_window_months`
+  - `minimum_booking_notice_minutes`
+  - calendar-month booking windows with month-end clamping
+  - inclusive policy boundaries
+  - `PAST_DATETIME`, `MINIMUM_BOOKING_NOTICE_VIOLATION`, and `BOOKING_WINDOW_EXCEEDED` errors
 - The DB-layer `transaction()` context owns SQLite locking/commit/rollback; the service contains no SQLite command and repositories still do not commit or rollback.
 - `ANY + CHOICE` is discovery only and cannot create a booking. `ANY + AUTO` needs the explicit `allow_auto_assign=True` delegation flag.
 - Appointment and item snapshots are created atomically; items preserve service name, duration, and price snapshots.
 
 Latest verification:
 - **Stage 27 Appointment Service completed and reviewed.**
+- **Stage 28 — Booking Window + Minimum Booking Notice completed, reviewed, merged into `main`, and verified.**
 - Availability tests use a reusable future-Monday helper rather than brittle hardcoded dates.
 - **Availability suite: 23 passed**
-- **Full suite: 75 passed, 0 failed**
+- **Full suite: 85 passed, 0 failed**
 
 Not implemented yet:
 - production database migration (SQLite remains temporary)
 - Alternative Discovery
-- booking-window rules
-- minimum booking notice
 - cancellation
 - rescheduling
 - timezone hardening
@@ -315,17 +320,12 @@ Still unresolved unless explicitly changed later:
 - owner vs staff permission matrix
 - first action/landing experience on app open
 - richer Best Slot / alternative ranking behavior
-- complete booking-window enforcement at the higher-level Appointment Service
 - timezone handling strategy for all scheduling flows
 
 ## 10. Next Milestone Selection
 
-Stage 27 (Appointment Service) is complete and reviewed. Do not invent or begin a Stage 28 implementation automatically.
+Stage 28 (Booking Window + Minimum Booking Notice) is complete, reviewed, merged into `main`, and verified.
 
-The next milestone should be selected after review, with likely candidates:
-- Booking window + minimum notice
-- Alternative Discovery
+Stage 29 is Alternative Discovery. It is not implemented yet.
 
-The selection depends on the agreed product priority.
-
-**STOP:** Do not begin either candidate until its contract is explicitly reviewed and approved.
+**STOP:** Do not begin Stage 29 until its contract is explicitly reviewed and approved.
