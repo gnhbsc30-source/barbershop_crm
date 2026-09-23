@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Any, Callable
 
 from app.db.database import transaction
@@ -42,6 +43,47 @@ class AppointmentBookingResult:
     total_duration_minutes: int
     total_price: float
     items: list[ResolvedAppointmentItem]
+
+
+class AlternativeReasonCode(str, Enum):
+    SAME_STAFF_SAME_DAY = "SAME_STAFF_SAME_DAY"
+    OTHER_STAFF_SAME_DAY = "OTHER_STAFF_SAME_DAY"
+    SAME_STAFF_OTHER_DAY = "SAME_STAFF_OTHER_DAY"
+    OTHER_STAFF_OTHER_DAY = "OTHER_STAFF_OTHER_DAY"
+
+
+@dataclass(frozen=True)
+class AlternativeOption:
+    """One request-scoped, non-reserved appointment alternative."""
+
+    option_id: str
+    staff_id: int
+    staff_name: str
+    start_datetime: datetime
+    end_datetime: datetime
+    items: list[ResolvedAppointmentItem]
+    total_duration_minutes: int
+    total_price: float
+    priority_group: int
+    reason_code: AlternativeReasonCode
+    distance_from_requested_start_minutes: int
+    distance_from_requested_date_days: int
+    date: str
+    day_of_week: str
+    display_date: str
+    display_time: str
+
+
+@dataclass(frozen=True)
+class AlternativeSearchResult:
+    """The future Alternative Discovery response without persistence or reservation."""
+
+    requested_staff_id: int | None
+    requested_start_datetime: datetime
+    requested_service_ids: list[int]
+    alternatives: list[AlternativeOption]
+    total_available: int
+    has_more: bool
 
 
 class AppointmentService:

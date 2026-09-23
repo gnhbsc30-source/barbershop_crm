@@ -737,6 +737,7 @@ def test_get_business_settings_returns_correct_settings(test_database):
         "business_id": business_id,
         "booking_window_months": 3,
         "minimum_booking_notice_minutes": 0,
+        "alternative_search_window_days": 7,
         "cancellation_cutoff_hours": 4,
         "allow_guest_booking": 1,
         "allow_customer_reschedule": 1,
@@ -769,6 +770,27 @@ def test_get_business_settings_is_business_scoped(test_database):
     assert result is None
 
 
+def test_get_business_settings_returns_alternative_search_window_days(
+    test_database,
+):
+    business_id = create_business(test_database, "Test Business")
+    test_database.execute(
+        """
+        INSERT INTO business_settings (
+            business_id,
+            alternative_search_window_days
+        )
+        VALUES (?, ?)
+        """,
+        (business_id, 14),
+    )
+    test_database.commit()
+
+    result = get_business_settings(test_database, business_id)
+
+    assert result["alternative_search_window_days"] == 14
+
+
 def test_get_business_settings_returns_none_when_missing(test_database):
     business_id = create_business(test_database, "Test Business")
 
@@ -778,16 +800,22 @@ def test_get_business_settings_returns_none_when_missing(test_database):
 
 
 @pytest.mark.parametrize(
-    ("booking_window_months", "minimum_booking_notice_minutes"),
+    (
+        "booking_window_months",
+        "minimum_booking_notice_minutes",
+        "alternative_search_window_days",
+    ),
     [
-        (0, 0),
-        (3, -1),
+        (0, 0, 7),
+        (3, -1, 7),
+        (3, 0, 0),
     ],
 )
-def test_business_settings_validate_booking_policy_values(
+def test_business_settings_reject_invalid_rule_values(
     test_database,
     booking_window_months,
     minimum_booking_notice_minutes,
+    alternative_search_window_days,
 ):
     business_id = create_business(test_database, "Test Business")
 
@@ -797,9 +825,15 @@ def test_business_settings_validate_booking_policy_values(
             INSERT INTO business_settings (
                 business_id,
                 booking_window_months,
-                minimum_booking_notice_minutes
+                minimum_booking_notice_minutes,
+                alternative_search_window_days
             )
-            VALUES (?, ?, ?)
+            VALUES (?, ?, ?, ?)
             """,
-            (business_id, booking_window_months, minimum_booking_notice_minutes),
+            (
+                business_id,
+                booking_window_months,
+                minimum_booking_notice_minutes,
+                alternative_search_window_days,
+            ),
         )
