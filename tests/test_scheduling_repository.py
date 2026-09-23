@@ -738,6 +738,7 @@ def test_get_business_settings_returns_correct_settings(test_database):
         "booking_window_months": 3,
         "minimum_booking_notice_minutes": 0,
         "alternative_search_window_days": 7,
+        "booking_interval_minutes": 30,
         "cancellation_cutoff_hours": 4,
         "allow_guest_booking": 1,
         "allow_customer_reschedule": 1,
@@ -791,6 +792,25 @@ def test_get_business_settings_returns_alternative_search_window_days(
     assert result["alternative_search_window_days"] == 14
 
 
+def test_get_business_settings_returns_booking_interval_minutes(test_database):
+    business_id = create_business(test_database, "Test Business")
+    test_database.execute(
+        """
+        INSERT INTO business_settings (
+            business_id,
+            booking_interval_minutes
+        )
+        VALUES (?, ?)
+        """,
+        (business_id, 15),
+    )
+    test_database.commit()
+
+    result = get_business_settings(test_database, business_id)
+
+    assert result["booking_interval_minutes"] == 15
+
+
 def test_get_business_settings_returns_none_when_missing(test_database):
     business_id = create_business(test_database, "Test Business")
 
@@ -804,11 +824,13 @@ def test_get_business_settings_returns_none_when_missing(test_database):
         "booking_window_months",
         "minimum_booking_notice_minutes",
         "alternative_search_window_days",
+        "booking_interval_minutes",
     ),
     [
-        (0, 0, 7),
-        (3, -1, 7),
-        (3, 0, 0),
+        (0, 0, 7, 30),
+        (3, -1, 7, 30),
+        (3, 0, 0, 30),
+        (3, 0, 7, 0),
     ],
 )
 def test_business_settings_reject_invalid_rule_values(
@@ -816,6 +838,7 @@ def test_business_settings_reject_invalid_rule_values(
     booking_window_months,
     minimum_booking_notice_minutes,
     alternative_search_window_days,
+    booking_interval_minutes,
 ):
     business_id = create_business(test_database, "Test Business")
 
@@ -826,14 +849,16 @@ def test_business_settings_reject_invalid_rule_values(
                 business_id,
                 booking_window_months,
                 minimum_booking_notice_minutes,
-                alternative_search_window_days
+                alternative_search_window_days,
+                booking_interval_minutes
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
             """,
             (
                 business_id,
                 booking_window_months,
                 minimum_booking_notice_minutes,
                 alternative_search_window_days,
+                booking_interval_minutes,
             ),
         )

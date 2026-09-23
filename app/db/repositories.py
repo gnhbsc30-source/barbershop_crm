@@ -546,6 +546,7 @@ def get_business_settings(
             booking_window_months,
             minimum_booking_notice_minutes,
             alternative_search_window_days,
+            booking_interval_minutes,
             cancellation_cutoff_hours,
             allow_guest_booking,
             allow_customer_reschedule,
