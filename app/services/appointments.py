@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import calendar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Callable
@@ -84,6 +84,163 @@ class AlternativeSearchResult:
     alternatives: list[AlternativeOption]
     total_available: int
     has_more: bool
+
+
+def classify_alternative_priority(
+    *,
+    requested_staff_id: int | None,
+    requested_start_datetime: datetime,
+    candidate_staff_id: int,
+    candidate_start_datetime: datetime,
+) -> tuple[int, AlternativeReasonCode]:
+    """Classify one SPECIFIC-staff alternative into an approved priority group."""
+    if requested_staff_id is None:
+        raise ValueError("ANY_STAFF_PRIORITY_UNSUPPORTED")
+
+    if candidate_start_datetime.date() < requested_start_datetime.date():
+        raise ValueError("EARLIER_CANDIDATE_DATE_UNSUPPORTED")
+
+    same_staff = candidate_staff_id == requested_staff_id
+    same_date = candidate_start_datetime.date() == requested_start_datetime.date()
+
+    if same_staff and same_date:
+        return 1, AlternativeReasonCode.SAME_STAFF_SAME_DAY
+    if not same_staff and same_date:
+        return 2, AlternativeReasonCode.OTHER_STAFF_SAME_DAY
+    if same_staff:
+        return 3, AlternativeReasonCode.SAME_STAFF_OTHER_DAY
+    return 4, AlternativeReasonCode.OTHER_STAFF_OTHER_DAY
+
+
+def calculate_alternative_ranking_metadata(
+    *,
+    requested_staff_id: int | None,
+    requested_start_datetime: datetime,
+    candidate_staff_id: int,
+    candidate_start_datetime: datetime,
+) -> tuple[int, AlternativeReasonCode, int, int]:
+    """Return approved priority and deterministic date/time distances."""
+    priority_group, reason_code = classify_alternative_priority(
+        requested_staff_id=requested_staff_id,
+        requested_start_datetime=requested_start_datetime,
+        candidate_staff_id=candidate_staff_id,
+        candidate_start_datetime=candidate_start_datetime,
+    )
+    date_distance_days = abs(
+        (candidate_start_datetime.date() - requested_start_datetime.date()).days
+    )
+    requested_clock_minutes = (
+        requested_start_datetime.hour * 60 + requested_start_datetime.minute
+    )
+    candidate_clock_minutes = (
+        candidate_start_datetime.hour * 60 + candidate_start_datetime.minute
+    )
+    start_distance_minutes = abs(candidate_clock_minutes - requested_clock_minutes)
+
+    return (
+        priority_group,
+        reason_code,
+        date_distance_days,
+        start_distance_minutes,
+    )
+
+
+def deduplicate_alternative_options(
+    options: list[AlternativeOption],
+) -> list[AlternativeOption]:
+    """Remove identical staff/start options, rejecting conflicting business truth."""
+    unique_by_identity: dict[tuple[int, datetime], AlternativeOption] = {}
+
+    for option in options:
+        identity = (option.staff_id, option.start_datetime)
+        existing = unique_by_identity.get(identity)
+        if existing is None:
+            unique_by_identity[identity] = option
+            continue
+
+        if _alternative_business_truth(existing) != _alternative_business_truth(option):
+            raise ValueError("CONFLICTING_ALTERNATIVE_DUPLICATE")
+
+    return list(unique_by_identity.values())
+
+
+def rank_alternative_options(
+    options: list[AlternativeOption],
+    *,
+    requested_staff_id: int | None,
+    requested_start_datetime: datetime,
+    booking_interval_minutes: int,
+) -> list[AlternativeOption]:
+    """Deduplicate, annotate, and deterministically sort SPECIFIC-staff options."""
+    if booking_interval_minutes <= 0:
+        raise ValueError("booking_interval_minutes must be positive")
+
+    ranked_options: list[AlternativeOption] = []
+    for option in deduplicate_alternative_options(options):
+        (
+            priority_group,
+            reason_code,
+            date_distance_days,
+            start_distance_minutes,
+        ) = calculate_alternative_ranking_metadata(
+            requested_staff_id=requested_staff_id,
+            requested_start_datetime=requested_start_datetime,
+            candidate_staff_id=option.staff_id,
+            candidate_start_datetime=option.start_datetime,
+        )
+        ranked_options.append(
+            replace(
+                option,
+                priority_group=priority_group,
+                reason_code=reason_code,
+                distance_from_requested_date_days=date_distance_days,
+                distance_from_requested_start_minutes=start_distance_minutes,
+            )
+        )
+
+    return sorted(
+        ranked_options,
+        key=lambda option: (
+            option.priority_group,
+            option.distance_from_requested_date_days,
+            option.distance_from_requested_start_minutes,
+            not _is_booking_interval_aligned(
+                option.start_datetime,
+                booking_interval_minutes,
+            ),
+            option.staff_id,
+            option.start_datetime,
+        ),
+    )
+
+
+def _alternative_business_truth(
+    option: AlternativeOption,
+) -> tuple[object, ...]:
+    return (
+        option.staff_id,
+        option.staff_name,
+        option.start_datetime,
+        option.end_datetime,
+        tuple(option.items),
+        option.total_duration_minutes,
+        option.total_price,
+    )
+
+
+def _is_booking_interval_aligned(
+    start_datetime: datetime,
+    booking_interval_minutes: int,
+) -> bool:
+    day_start = start_datetime.replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    return (start_datetime - day_start) % timedelta(
+        minutes=booking_interval_minutes
+    ) == timedelta(0)
 
 
 class AppointmentService:
