@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
@@ -8,6 +8,10 @@ from app.db.repositories import (
     get_business_settings,
     get_services_by_ids,
     get_staff,
+)
+from app.services.alternative_selection import (
+    AlternativeSelectionContextStore,
+    AlternativeSelectionOption,
 )
 from app.services.appointments import (
     AlternativeOption,
@@ -21,15 +25,25 @@ from app.services.appointments import (
 from app.services.availability import AvailabilityEngine, generate_candidate_start_times
 
 
+@dataclass(frozen=True)
+class AlternativeDiscoveryResponse:
+    """Discovery data paired with an optional temporary selection context."""
+
+    search_id: str | None
+    result: AlternativeSearchResult
+
+
 class AlternativeDiscoveryService:
     """Discover non-persistent alternatives for SPECIFIC staff requests."""
 
     def __init__(
         self,
         connection: Any,
+        selection_context_store: AlternativeSelectionContextStore,
         now_provider: Callable[[], datetime] | None = None,
     ):
         self.connection = connection
+        self._selection_context_store = selection_context_store
         self._now_provider = now_provider or datetime.now
 
     def discover(
@@ -39,7 +53,7 @@ class AlternativeDiscoveryService:
         requested_staff_id: int | None,
         requested_start_datetime: datetime,
         requested_service_ids: list[int],
-    ) -> AlternativeSearchResult:
+    ) -> AlternativeDiscoveryResponse:
         """Return every legal, ranked alternative in the approved discovery range."""
         if requested_staff_id is None:
             raise AppointmentBookingError("ANY_STAFF_DISCOVERY_UNSUPPORTED")
@@ -153,7 +167,7 @@ class AlternativeDiscoveryService:
             replace(option, option_id=f"option_{index:03d}")
             for index, option in enumerate(ranked, start=1)
         ]
-        return AlternativeSearchResult(
+        result = AlternativeSearchResult(
             requested_staff_id=requested_staff_id,
             requested_start_datetime=requested_start_datetime,
             requested_service_ids=requested_service_ids,
@@ -161,6 +175,22 @@ class AlternativeDiscoveryService:
             total_available=len(alternatives),
             has_more=False,
         )
+        if not alternatives:
+            return AlternativeDiscoveryResponse(search_id=None, result=result)
+
+        context = self._selection_context_store.create_search_context(
+            business_id=business_id,
+            requested_service_ids=requested_service_ids,
+            options=[
+                AlternativeSelectionOption(
+                    option_id=option.option_id,
+                    staff_id=option.staff_id,
+                    start_datetime=option.start_datetime,
+                )
+                for option in alternatives
+            ],
+        )
+        return AlternativeDiscoveryResponse(search_id=context.search_id, result=result)
 
     @staticmethod
     def _search_dates(

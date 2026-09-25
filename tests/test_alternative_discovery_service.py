@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from app.services import alternatives
+from app.services.alternative_selection import InMemoryAlternativeSelectionContextStore
 from app.services.alternatives import AlternativeDiscoveryService
 from app.services.appointments import rank_alternative_options
 from app.services.appointments import AlternativeReasonCode, AppointmentBookingError
@@ -77,13 +78,51 @@ def setup_discovery(connection, *, settings=None, dates=None):
     return business_id, staff_ids, service_id
 
 
-def discover(connection, business_id, requested_staff_id, service_ids, requested_start, now):
-    return AlternativeDiscoveryService(connection, now_provider=lambda: now).discover(
+def discover(
+    connection,
+    business_id,
+    requested_staff_id,
+    service_ids,
+    requested_start,
+    now,
+    *,
+    selection_context_store=None,
+    return_response=False,
+):
+    selection_context_store = selection_context_store or (
+        InMemoryAlternativeSelectionContextStore(now_provider=lambda: now)
+    )
+    response = AlternativeDiscoveryService(
+        connection,
+        selection_context_store=selection_context_store,
+        now_provider=lambda: now,
+    ).discover(
         business_id=business_id,
         requested_staff_id=requested_staff_id,
         requested_start_datetime=requested_start,
         requested_service_ids=service_ids,
     )
+    return response if return_response else response.result
+
+
+class RecordingSelectionContextStore:
+    def __init__(self, now_provider):
+        self._store = InMemoryAlternativeSelectionContextStore(
+            now_provider=now_provider
+        )
+        self.create_calls = 0
+        self.received_options = []
+
+    def create_search_context(self, **kwargs):
+        self.create_calls += 1
+        self.received_options = list(kwargs["options"])
+        return self._store.create_search_context(**kwargs)
+
+    def resolve_selection(self, search_id, option_id):
+        return self._store.resolve_selection(search_id, option_id)
+
+    def expire_search_context(self, search_id):
+        self._store.expire_search_context(search_id)
 
 
 def test_discovery_returns_all_specific_priority_groups_and_same_day_earlier_time(test_database):
@@ -617,3 +656,95 @@ def test_discovery_returns_empty_result_when_no_staff_is_eligible(test_database)
     assert result.alternatives == []
     assert result.total_available == 0
     assert result.has_more is False
+
+
+def test_discovery_creates_context_with_final_minimal_options(test_database):
+    business_id, (requested_staff_id, _), service_id = setup_discovery(test_database)
+    now = datetime(2027, 1, 15, 8, 0)
+    store = RecordingSelectionContextStore(now_provider=lambda: now)
+
+    response = discover(
+        test_database,
+        business_id,
+        requested_staff_id,
+        [service_id],
+        datetime(2027, 1, 15, 12, 0),
+        now,
+        selection_context_store=store,
+        return_response=True,
+    )
+
+    assert response.search_id
+    assert store.create_calls == 1
+    assert [option.option_id for option in store.received_options] == [
+        option.option_id for option in response.result.alternatives
+    ]
+    assert all(option.option_id != "pending" for option in store.received_options)
+    assert all(
+        set(option.__dict__) == {"option_id", "staff_id", "start_datetime"}
+        for option in store.received_options
+    )
+
+    for option in response.result.alternatives:
+        selection = store.resolve_selection(response.search_id, option.option_id)
+        assert selection.business_id == business_id
+        assert selection.requested_service_ids == (service_id,)
+        assert selection.staff_id == option.staff_id
+        assert selection.start_datetime == option.start_datetime
+
+
+def test_empty_discovery_returns_no_search_context(test_database):
+    business_id, (requested_staff_id, _), service_id = setup_discovery(test_database)
+    test_database.execute(
+        "DELETE FROM staff_services WHERE service_id = ?",
+        (service_id,),
+    )
+    test_database.commit()
+    now = datetime(2027, 1, 15, 8, 0)
+    store = RecordingSelectionContextStore(now_provider=lambda: now)
+
+    response = discover(
+        test_database,
+        business_id,
+        requested_staff_id,
+        [service_id],
+        datetime(2027, 1, 15, 12, 0),
+        now,
+        selection_context_store=store,
+        return_response=True,
+    )
+
+    assert response.search_id is None
+    assert response.result.alternatives == []
+    assert store.create_calls == 0
+
+
+def test_discovery_contexts_are_isolated_between_searches(test_database):
+    business_id, (requested_staff_id, _), service_id = setup_discovery(test_database)
+    now = datetime(2027, 1, 15, 8, 0)
+    store = InMemoryAlternativeSelectionContextStore(now_provider=lambda: now)
+    arguments = {
+        "business_id": business_id,
+        "requested_staff_id": requested_staff_id,
+        "service_ids": [service_id],
+        "requested_start": datetime(2027, 1, 15, 12, 0),
+        "now": now,
+        "selection_context_store": store,
+        "return_response": True,
+    }
+
+    first = discover(test_database, **arguments)
+    second = discover(test_database, **arguments)
+
+    assert first.search_id != second.search_id
+    assert first.result == second.result
+    assert first.result.alternatives[0].option_id == "option_001"
+    assert second.result.alternatives[0].option_id == "option_001"
+    assert (
+        store.resolve_selection(first.search_id, "option_001").search_id
+        == first.search_id
+    )
+    assert (
+        store.resolve_selection(second.search_id, "option_001").search_id
+        == second.search_id
+    )
