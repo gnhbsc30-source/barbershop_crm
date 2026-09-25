@@ -351,6 +351,23 @@ class AppointmentService:
         if get_customer(self.connection, business_id, customer_id) is None:
             raise AppointmentBookingError("CUSTOMER_NOT_FOUND")
 
+        return requested_start, self.resolve_staff_services(
+            business_id=business_id,
+            staff_id=staff_id,
+            service_ids=service_ids,
+        )
+
+    def resolve_staff_services(
+        self,
+        *,
+        business_id: int,
+        staff_id: int,
+        service_ids: list[int],
+    ) -> list[ResolvedAppointmentItem]:
+        """Validate one staff member and resolve their service snapshots."""
+        if not service_ids:
+            raise AppointmentBookingError("NO_SERVICES")
+
         staff = get_staff(self.connection, business_id, staff_id)
         if staff is None:
             raise AppointmentBookingError("STAFF_NOT_FOUND")
@@ -396,7 +413,7 @@ class AppointmentService:
                 )
             )
 
-        return requested_start, resolved_items
+        return resolved_items
 
     @staticmethod
     def _parse_start_datetime(start_datetime: str) -> datetime:
@@ -442,7 +459,7 @@ class AppointmentService:
         if requested_start < earliest_allowed_start:
             raise AppointmentBookingError("MINIMUM_BOOKING_NOTICE_VIOLATION")
 
-        latest_allowed_start = self._add_calendar_months(
+        latest_allowed_start = self.add_calendar_months(
             now,
             booking_window_months,
         )
@@ -450,7 +467,7 @@ class AppointmentService:
             raise AppointmentBookingError("BOOKING_WINDOW_EXCEEDED")
 
     @staticmethod
-    def _add_calendar_months(value: datetime, months: int) -> datetime:
+    def add_calendar_months(value: datetime, months: int) -> datetime:
         """Add whole calendar months while clamping invalid month-end dates."""
         month_index = value.month - 1 + months
         year = value.year + month_index // 12

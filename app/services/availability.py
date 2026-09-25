@@ -340,6 +340,17 @@ class AvailabilityEngine:
     # STAFF / SERVICE RESOLUTION
     # ==================================================================
 
+    def get_eligible_staff(
+        self,
+        business_id: int,
+        service_ids: list[int],
+    ) -> list[dict[str, Any]]:
+        """Return active staff who can perform every requested service."""
+        return self._get_eligible_staff(
+            business_id=business_id,
+            service_ids=service_ids,
+        )
+
     def _get_eligible_staff(
         self,
         business_id: int,
@@ -615,6 +626,19 @@ class AvailabilityEngine:
             start_datetime,
             end_datetime,
             blocked_ranges,
+        )
+
+    def get_staff_free_windows(
+        self,
+        business_id: int,
+        staff_id: int,
+        target_date: date,
+    ) -> list[tuple[datetime, datetime]]:
+        """Return the existing deterministic free windows for one staff day."""
+        return self._build_staff_availability_windows(
+            business_id=business_id,
+            staff_id=staff_id,
+            target_date=target_date,
         )
 
     def _build_staff_availability_windows(
