@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from threading import RLock
 from typing import Callable, Protocol, Sequence
 from uuid import uuid4
 
@@ -64,6 +65,14 @@ class AlternativeSelectionContextStore(Protocol):
         option_id: str,
     ) -> ResolvedAlternativeSelection: ...
 
+    def claim_selection(
+        self,
+        search_id: str,
+        option_id: str,
+    ) -> ResolvedAlternativeSelection: ...
+
+    def release_selection_claim(self, search_id: str) -> None: ...
+
     def expire_search_context(self, search_id: str) -> None: ...
 
 
@@ -75,6 +84,8 @@ class InMemoryAlternativeSelectionContextStore:
     def __init__(self, now_provider: Callable[[], datetime] | None = None):
         self._now_provider = now_provider or datetime.now
         self._contexts: dict[str, AlternativeSearchContext] = {}
+        self._claimed_search_ids: set[str] = set()
+        self._lock = RLock()
 
     def create_search_context(
         self,
@@ -83,36 +94,72 @@ class InMemoryAlternativeSelectionContextStore:
         requested_service_ids: Sequence[int],
         options: Sequence[AlternativeSelectionOption],
     ) -> AlternativeSearchContext:
-        created_at = self._now_provider()
-        search_id = self._new_search_id()
-        context = AlternativeSearchContext(
-            search_id=search_id,
-            business_id=business_id,
-            requested_service_ids=tuple(requested_service_ids),
-            created_at=created_at,
-            expires_at=created_at + self._TTL,
-            options=tuple(
-                AlternativeSelectionOption(
-                    option_id=option.option_id,
-                    staff_id=option.staff_id,
-                    start_datetime=option.start_datetime,
-                )
-                for option in options
-            ),
-        )
-        self._contexts[search_id] = context
-        return context
+        with self._lock:
+            created_at = self._now_provider()
+            search_id = self._new_search_id()
+            context = AlternativeSearchContext(
+                search_id=search_id,
+                business_id=business_id,
+                requested_service_ids=tuple(requested_service_ids),
+                created_at=created_at,
+                expires_at=created_at + self._TTL,
+                options=tuple(
+                    AlternativeSelectionOption(
+                        option_id=option.option_id,
+                        staff_id=option.staff_id,
+                        start_datetime=option.start_datetime,
+                    )
+                    for option in options
+                ),
+            )
+            self._contexts[search_id] = context
+            return context
 
     def resolve_selection(
         self,
         search_id: str,
         option_id: str,
     ) -> ResolvedAlternativeSelection:
+        with self._lock:
+            context = self._get_valid_context(search_id)
+            return self._resolve_context_option(context, option_id)
+
+    def claim_selection(
+        self,
+        search_id: str,
+        option_id: str,
+    ) -> ResolvedAlternativeSelection:
+        """Atomically resolve and claim one context for a booking attempt."""
+        with self._lock:
+            context = self._get_valid_context(search_id)
+            selection = self._resolve_context_option(context, option_id)
+            if search_id in self._claimed_search_ids:
+                raise AlternativeSelectionError("ALTERNATIVE_SELECTION_IN_PROGRESS")
+            self._claimed_search_ids.add(search_id)
+            return selection
+
+    def release_selection_claim(self, search_id: str) -> None:
+        with self._lock:
+            self._claimed_search_ids.discard(search_id)
+
+    def expire_search_context(self, search_id: str) -> None:
+        with self._lock:
+            self._contexts.pop(search_id, None)
+            self._claimed_search_ids.discard(search_id)
+
+    def _get_valid_context(self, search_id: str) -> AlternativeSearchContext:
         context = self._contexts.get(search_id)
         if context is None or self._now_provider() >= context.expires_at:
             self._contexts.pop(search_id, None)
+            self._claimed_search_ids.discard(search_id)
             raise AlternativeSelectionError("ALTERNATIVE_SEARCH_EXPIRED")
+        return context
 
+    @staticmethod
+    def _resolve_context_option(
+        context: AlternativeSearchContext,
+        option_id: str,
+    ) -> ResolvedAlternativeSelection:
         for option in context.options:
             if option.option_id == option_id:
                 return ResolvedAlternativeSelection(
@@ -125,9 +172,6 @@ class InMemoryAlternativeSelectionContextStore:
                 )
 
         raise AlternativeSelectionError("ALTERNATIVE_OPTION_NOT_FOUND")
-
-    def expire_search_context(self, search_id: str) -> None:
-        self._contexts.pop(search_id, None)
 
     def _new_search_id(self) -> str:
         search_id = uuid4().hex

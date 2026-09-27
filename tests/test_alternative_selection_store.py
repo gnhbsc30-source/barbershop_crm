@@ -177,3 +177,42 @@ def test_input_list_mutation_does_not_change_stored_context():
     selection = store.resolve_selection(context.search_id, "option_001")
     assert selection.requested_service_ids == (4, 7)
     assert selection.staff_id == 10
+
+
+def test_claim_blocks_all_options_in_the_same_search_until_released():
+    store = InMemoryAlternativeSelectionContextStore(
+        now_provider=lambda: datetime(2027, 1, 15, 8, 0)
+    )
+    first = create_context(store)
+    second = create_context(store)
+
+    assert store.claim_selection(first.search_id, "option_001").staff_id == 10
+    with pytest.raises(
+        AlternativeSelectionError,
+        match="ALTERNATIVE_SELECTION_IN_PROGRESS",
+    ):
+        store.claim_selection(first.search_id, "option_001")
+    with pytest.raises(
+        AlternativeSelectionError,
+        match="ALTERNATIVE_SELECTION_IN_PROGRESS",
+    ):
+        store.claim_selection(first.search_id, "option_002")
+
+    assert store.claim_selection(second.search_id, "option_001").staff_id == 10
+    store.release_selection_claim(first.search_id)
+    assert store.claim_selection(first.search_id, "option_002").staff_id == 11
+
+
+def test_claim_does_not_extend_ttl_and_expiration_removes_claim():
+    clock = MutableClock(datetime(2027, 1, 15, 8, 0))
+    store = InMemoryAlternativeSelectionContextStore(now_provider=clock.now)
+    context = create_context(store)
+
+    store.claim_selection(context.search_id, "option_001")
+    assert context.expires_at == datetime(2027, 1, 15, 8, 15)
+    clock.value = context.expires_at
+
+    with pytest.raises(AlternativeSelectionError, match="ALTERNATIVE_SEARCH_EXPIRED"):
+        store.resolve_selection(context.search_id, "option_001")
+    with pytest.raises(AlternativeSelectionError, match="ALTERNATIVE_SEARCH_EXPIRED"):
+        store.claim_selection(context.search_id, "option_001")
