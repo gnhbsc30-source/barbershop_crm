@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -123,6 +123,53 @@ class RecordingSelectionContextStore:
 
     def expire_search_context(self, search_id):
         self._store.expire_search_context(search_id)
+
+
+@pytest.mark.parametrize(
+    "request_timezone",
+    [timezone.utc, timezone(timedelta(hours=3)), timezone(timedelta(hours=-5))],
+    ids=["utc", "positive-offset", "negative-offset"],
+)
+def test_discovery_rejects_timezone_aware_request(test_database, request_timezone):
+    business_id, (requested_staff_id, _), service_id = setup_discovery(test_database)
+    now = datetime(2027, 1, 15, 8, 0)
+    store = RecordingSelectionContextStore(now_provider=lambda: now)
+
+    with pytest.raises(AppointmentBookingError) as caught:
+        discover(
+            test_database,
+            business_id,
+            requested_staff_id,
+            [service_id],
+            datetime(2027, 1, 15, 12, 0, tzinfo=request_timezone),
+            now,
+            selection_context_store=store,
+        )
+
+    assert caught.value.code == "INVALID_DATETIME"
+    assert store.create_calls == 0
+
+
+def test_discovery_accepts_naive_request_without_changing_search_semantics(test_database):
+    business_id, (requested_staff_id, _), service_id = setup_discovery(test_database)
+    requested_start = datetime(2027, 1, 15, 12, 0)
+
+    result = discover(
+        test_database,
+        business_id,
+        requested_staff_id,
+        [service_id],
+        requested_start,
+        datetime(2027, 1, 15, 8, 0),
+    )
+
+    assert result.requested_start_datetime == requested_start
+    assert result.alternatives
+    assert all(option.start_datetime.tzinfo is None for option in result.alternatives)
+    assert any(
+        option.start_datetime == datetime(2027, 1, 15, 9, 0)
+        for option in result.alternatives
+    )
 
 
 def test_discovery_returns_all_specific_priority_groups_and_same_day_earlier_time(test_database):

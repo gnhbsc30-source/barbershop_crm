@@ -58,6 +58,9 @@ class AlternativeDiscoveryService:
         if requested_staff_id is None:
             raise AppointmentBookingError("ANY_STAFF_DISCOVERY_UNSUPPORTED")
 
+        if requested_start_datetime.tzinfo is not None:
+            raise AppointmentBookingError("INVALID_DATETIME")
+
         now = self._now_provider()
         settings = get_business_settings(self.connection, business_id)
         booking_window_months = settings["booking_window_months"] if settings else 3
