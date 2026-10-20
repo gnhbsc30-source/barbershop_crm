@@ -22,6 +22,44 @@ StaffSelectionType = Literal["SPECIFIC", "ANY"]
 AnySelectionMode = Literal["CHOICE", "AUTO"]
 
 
+def generate_candidate_start_times(
+    free_window_start: datetime,
+    free_window_end: datetime,
+    service_duration_minutes: int,
+    booking_interval_minutes: int,
+) -> list[datetime]:
+    """Generate legal starts from one real free window.
+
+    The real window start is always considered first. Later candidates use
+    the preferred interval, but only when the full service fits in the window.
+    """
+    if service_duration_minutes <= 0:
+        raise ValueError("service_duration_minutes must be positive")
+    if booking_interval_minutes <= 0:
+        raise ValueError("booking_interval_minutes must be positive")
+
+    duration = timedelta(minutes=service_duration_minutes)
+    if free_window_start + duration > free_window_end:
+        return []
+
+    candidates = [free_window_start]
+    interval = timedelta(minutes=booking_interval_minutes)
+    day_start = free_window_start.replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    elapsed = free_window_start - day_start
+    next_candidate = day_start + ((elapsed // interval) + 1) * interval
+
+    while next_candidate + duration <= free_window_end:
+        candidates.append(next_candidate)
+        next_candidate += interval
+
+    return candidates
+
+
 @dataclass
 class AvailabilityResult:
     """
@@ -302,6 +340,17 @@ class AvailabilityEngine:
     # STAFF / SERVICE RESOLUTION
     # ==================================================================
 
+    def get_eligible_staff(
+        self,
+        business_id: int,
+        service_ids: list[int],
+    ) -> list[dict[str, Any]]:
+        """Return active staff who can perform every requested service."""
+        return self._get_eligible_staff(
+            business_id=business_id,
+            service_ids=service_ids,
+        )
+
     def _get_eligible_staff(
         self,
         business_id: int,
@@ -577,6 +626,19 @@ class AvailabilityEngine:
             start_datetime,
             end_datetime,
             blocked_ranges,
+        )
+
+    def get_staff_free_windows(
+        self,
+        business_id: int,
+        staff_id: int,
+        target_date: date,
+    ) -> list[tuple[datetime, datetime]]:
+        """Return the existing deterministic free windows for one staff day."""
+        return self._build_staff_availability_windows(
+            business_id=business_id,
+            staff_id=staff_id,
+            target_date=target_date,
         )
 
     def _build_staff_availability_windows(
