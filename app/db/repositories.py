@@ -2,6 +2,49 @@ from sqlite3 import Connection
 from typing import Any
 
 
+def get_user_account_identity(
+    connection: Connection,
+    business_id: int,
+    user_id: int,
+) -> dict[str, Any] | None:
+    """Read an employee account and business state without authorizing it."""
+    row = connection.execute(
+        """
+        SELECT u.id, u.business_id, u.username, u.password_hash, u.role,
+               u.is_active, b.is_active AS business_is_active
+        FROM users AS u
+        LEFT JOIN businesses AS b ON b.id = u.business_id
+        WHERE u.business_id = ? AND u.id = ?
+        """,
+        (business_id, user_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_customer_account_identity(
+    connection: Connection,
+    business_id: int,
+    account_id: int,
+) -> dict[str, Any] | None:
+    """Read an account with its tenant-matched customer and business state."""
+    row = connection.execute(
+        """
+        SELECT a.id, a.business_id, a.customer_id, a.username, a.password_hash,
+               a.is_active, b.is_active AS business_is_active,
+               c.id AS linked_customer_id,
+               c.business_id AS linked_customer_business_id,
+               c.is_active AS customer_is_active
+        FROM customer_accounts AS a
+        LEFT JOIN businesses AS b ON b.id = a.business_id
+        LEFT JOIN customers AS c
+            ON c.id = a.customer_id AND c.business_id = a.business_id
+        WHERE a.business_id = ? AND a.id = ?
+        """,
+        (business_id, account_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def create_customer(
     connection: Connection,
     business_id: int,
