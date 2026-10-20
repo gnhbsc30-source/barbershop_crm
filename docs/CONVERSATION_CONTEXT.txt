@@ -1,21 +1,33 @@
 # Barbershop CRM — Conversation Context Archive
 # Curated recovery context, not a literal transcript of every chat message.
 
-## Current Verified Post-Merge Checkpoint — 2026-10-20
+## Current Verified Feature Checkpoint — 2026-10-20
 
 Project path: /Users/aminadavyamin/Documents/Projects/barbershop_crm
-Branch: main
-Verified merge commit: d6b4866461bab2ea13dd8a001b3101136110c26a
-Local and remote main: d6b4866461bab2ea13dd8a001b3101136110c26a (synchronized)
-Merged PR #2: https://github.com/gnhbsc30-source/barbershop_crm/pull/2
+Branch: feature/stage-30b1-auth-foundation
+Reviewed implementation/remediation HEAD: 24edf454379d142d9816131a83783b4c4e93ff32
+Local and remote main: 2936be4013aa2b5c6440442ce49afec8eb3effcb (unchanged base)
 GitHub: https://github.com/gnhbsc30-source/barbershop_crm
-Post-merge full regression: 167 passed, 0 failed.
-Stage 29 changes are present on main with no unexpected local/remote differences.
+Full regression: 405 passed, 0 failed; remediation focused HTTP/launcher: 92 passed.
+The feature was five expected commits ahead / zero behind main, synchronized and
+clean before this documentation update. These are implementation checkpoint SHAs;
+consult Git history for the later documentation checkpoint/PR HEAD.
 
+Stage 30B.1 Local Authentication & Development Foundation is implemented, reviewed
+and verified on the feature branch ONLY, not merged into main. Final security audit
+found a trailing-slash redirect blocker plus approved query/header corrections.
+All three are fixed with 15 new regression cases, raising 390 tests to 405.
+Implementation/remediation is approved for documentation and the PR gate, not merge
+or production deployment. The authorized workflow is checkpoint docs -> feature PR
+review -> separately approved merge -> post-merge verification. No auto-merge.
+Stage 30B.2 is not started and requires its own approved implementation contract.
+
+Historical Stage 29 checkpoint:
 Stage 29 Alternative Discovery and Selection Execution is implemented, reviewed,
 merged into main, and verified. A regular Merge Commit preserved the feature history.
-Final Audit verdict: READY WITH NON-BLOCKING NOTES for the development/MVP scope;
-this is not a production-readiness claim.
+PR #2: https://github.com/gnhbsc30-source/barbershop_crm/pull/2
+Merge: d6b4866461bab2ea13dd8a001b3101136110c26a; post-merge regression: 167 passed.
+Final Audit verdict was READY WITH NON-BLOCKING NOTES for development/MVP scope.
 The audit checkpoint had 163 passing tests at ef8fdd4ebf50735c43a4e91e202c1072e9fb3d60.
 The reviewed deterministic aware-datetime rejection fix raised the suite to 167.
 
@@ -23,18 +35,14 @@ Historical source branch: feature/stage-29-alternative-discovery, retained local
 Historical implementation HEAD: 6091baf8caea0aa005bba4e7271b285368da162d.
 Reviewed documentation/PR head: 47bdcea7f9fcf90832264ed652d35bb88d682a5f.
 Pre-merge main: 5846451000e8dc2ef75cb9605c63613295ef353e.
-The working tree was clean at post-merge verification. Only the three context
-documents are now being updated for post-merge review, without an automatic commit.
-The SHA above identifies the verified merge, not a future documentation commit.
-The pre-merge documentation review, PR approval, merge, and verification are complete.
-Next: review this post-merge checkpoint and commit/push it only after explicit approval.
-The next feature milestone has not been selected or approved; do not start Stage 30.
+Stage 29's final documentation commit is 2936be4013aa2b5c6440442ce49afec8eb3effcb,
+the current main base. Its review/merge/checkpoint workflow is complete, not pending.
 
 ## Project Identity
 
 Project: GB Barbershop CRM & AI / Barbershop CRM
 Type: SaaS for barbershops
-Implemented stack: Python + FastAPI startup/health endpoint + SQLite domain services.
+Implemented stack: Python + FastAPI health/development-auth endpoints + SQLite domain services.
 Planned frontend: vanilla HTML/CSS/JS (not implemented in the tracked project).
 AI direction: Gemini/NLU + ChromaDB/RAG, with strict deterministic backend control;
 this is product direction, not implemented Stage 29 AI/Chat integration.
@@ -105,7 +113,11 @@ Working schedules include:
 - closures
 - blocks
 
-Cancellation policy is configurable. Example default direction: less than 4 hours may require contacting the barber.
+Historical cancellation direction: configurable policy; an example discussed was contacting the barber within 4 hours. Execution, final cutoffs, owner overrides and status-transition rules are not implemented or approved by this checkpoint.
+
+Approved future MVP owner editing/rescheduling scope: staff/date/time only.
+Services, customer identity, manual prices and notes edits are excluded from MVP
+rescheduling. This boundary is not an implemented modification command.
 
 Waitlist:
 - first eligible matches
@@ -131,7 +143,7 @@ Dashboard should expose:
 - summaries
 - expected booked revenue vs actual completed revenue
 
-Price rule:
+Historical price direction, not finalized Stage 30 repricing policy or implemented flow:
 - appointment more than one week away can receive a new price and notification
 - appointment within one week retains its existing price
 
@@ -209,11 +221,13 @@ docs/
 
 Current clean project has also added `exceptions/` because concrete domain exceptions justified it.
 
-Physically present folders containing tracked files are app/core/, app/db/,
-app/exceptions/, app/services/, docs/, and tests/, plus tracked app/main.py and
-app/__init__.py. app/api/, app/ai/, frontend/admin/, frontend/customer/, knowledge/,
-and scripts/ are planned, currently absent and not tracked. A planned folder is
-not evidence of a completed feature.
+Physically present folders containing tracked files are app/api/, app/core/,
+app/db/, app/exceptions/, app/services/, docs/ and tests/, plus tracked app/main.py
+and app/__init__.py. Stage 30B.1 adds app/api/auth.py and
+app/api/auth_dependencies.py; app/api/ was only planned at the Stage 29 checkpoint.
+app/ai/, frontend/admin/, frontend/customer/, knowledge/ and scripts/ remain absent
+and untracked. Development commands are app/dev_data.py and app/dev_server.py,
+not a new scripts/ infrastructure. Planned folders are not implemented features.
 
 ## Database Foundation
 
@@ -225,6 +239,8 @@ Tenant root:
 
 Relevant tables:
 - businesses
+- users (OWNER account records)
+- customer_accounts (CUSTOMER identities linked to customers)
 - staff
 - customers
 - services
@@ -555,9 +571,54 @@ Still deferred:
 - Business-local timezone/DST hardening and consistent scheduling clocks.
 - Settings integer-type hardening: SQLite INTEGER affinity and >0 checks can accept fractional/text values.
 - Lazy expired-context memory cleanup; no production search resource limits or pagination/query optimization.
-- Authentication/authorization remains an application-boundary responsibility. Opaque IDs alone do not establish user authorization.
-- ANY Alternative Discovery, API/UI/Chat integration, cancellation, and rescheduling.
+- Authentication/authorization remains an application-boundary responsibility. Stage 30B.1 adds development auth on its feature branch; search-context ownership/business-resource authorization integration remains unimplemented. Opaque IDs alone do not establish user authorization.
+- ANY Alternative Discovery, booking/calendar HTTP APIs, UI/Chat integration, cancellation and rescheduling. The three Stage 30B.1 development auth endpoints are separate, implemented feature work.
 - Additional permanent regression scenarios for unexpected booking failures, simultaneous independent searches, TTL during active booking, precise candidate policy boundaries, and changed configuration between discovery/selection.
+
+## Stage 30B.1 — Authentication and Development Foundation (Pending Merge)
+
+Five reviewed commits, oldest first:
+1. 75f3c9d371b2f7cd9c29757212dcfde6f04b45d3 — identity and credential foundation.
+2. 507fe74a28ce356c38ca29a8ea985a526267d092 — sessions and rate limiting.
+3. d878fbf031f6c994fc30096bd3a19ca7c1037dce — safe provisioning and manual rotation.
+4. f5c18ea3e7866eb77702279999cec9eb44ed4e6c — local HTTP auth; audit baseline 390 passed.
+5. 24edf454379d142d9816131a83783b4c4e93ff32 — auth routing/query/header remediation; 405 passed.
+
+Identity and responsibilities:
+- authentication.py owns immutable Principal, namespaced subjects, strict random access-code parsing/generation, Argon2id verification and fingerprints. It does not store sessions/rate-limit counters or implement HTTP.
+- OWNER requires an active OWNER user and business. CUSTOMER is an active customer_account linked to an active customer in the same active business; it is not a staff role. Account IDs and customer IDs are different concepts.
+- Private provisioned references select identities. Client role/business/customer IDs are never authorization. Repositories receive connections and provide tenant-scoped persistence only, without commit/rollback or security decisions.
+- Codes contain a 16-character public selector and 43-character/256-bit random secret. Argon2id uses 19 MiB, time cost 2, parallelism 1, salt 16, hash 32. Errors are generic; well-formed unknown selectors use dummy verification.
+
+Sessions and transport:
+- auth_sessions.py holds locked, bounded (default 1024) digest-keyed sessions with one-hour absolute TTL, aware injectable clock and independent CSRF tokens. Valid before expiry, invalid at/after it. No sliding renewal. Successful login replaces the presented existing session; failed login preserves it; logout invalidates only that session.
+- auth_rate_limit.py separately counts admitted attempts (including successes): five/selector/five minutes, twenty globally/minute, bounded and atomic. Unknown/malformed selectors are counted before expensive verification; login body retention is capped at 4096 bytes.
+- Fingerprint is SHA-256 of the exact stored hash verified at login. Protected requests reload current tenant/account/business/role/customer link/selector and compare Principal/fingerprint. Changes reject old sessions on revalidation; no silent rebinding to new credentials.
+- POST /api/v1/auth/dev-session, GET /api/v1/auth/me, DELETE /api/v1/auth/session are the only auth routes. Login/me return trusted principal, expiry and CSRF token, never a body session token/hash/fingerprint. Session token is host-only, HttpOnly, SameSite=Strict cookie, Path=/, Max-Age=3600. Secure=False is an explicit local HTTP exception.
+- Exact Host 127.0.0.1:8000 and Origin http://127.0.0.1:8000, loopback client, no proxy trust/permissive CORS. Login needs X-CSRF-Protection: 1 plus JSON and exact Origin; logout needs exact Origin and its session-bound X-CSRF-Token. Errors are sanitized; responses no-store.
+- app/main.py composes lifespan/router/middleware/health only. App-scoped stores are initialized after validating already provisioned data; no startup seed/reset. SQLite connections are created, used and closed in the same worker.
+- Supported launcher: python -m app.dev_server; development only, 127.0.0.1:8000, one worker, no reload/proxy trust/access logs; public API docs disabled.
+
+Provisioning and rotation:
+- Explicit confirmed terminal commands only; no live identities are provisioned by tests or this checkpoint. Synthetic fixture: one business, OWNER/CUSTOMER, two staff/services, compatibility, schedules/settings, existing schema unchanged.
+- Dedicated configured data/dev/barbershop.db plus private fixture-manifest.json; private directory/files (0700/0600), no raw credentials/hashes in manifest, both ignored. Manifest is a locator/fixture record, never a substitute for current DB identity validation.
+- Recognized reruns preserve appointments and other data with no new codes. Unknown/incomplete datasets fail closed; no automatic reset or credential regeneration.
+- Rotation confirms ROTATE <selector> for an existing provisioned identity, hashes a new random secret and conditionally updates only its expected previous credential in a short transaction. Prior sessions fail subsequent fingerprint validation. Interrupted secret delivery after commit requires explicit re-rotation, not fallback/reset.
+- Database/manifest creation is not cross-resource atomic. Partial states are retained/refused and require explicit recovery; no automatic adoption/repair.
+
+Final audit remediation and verification:
+- Application-level redirect_slashes=False: wrong-slash auth paths fail safely without reflecting credential-like query values into Location.
+- Strict query rejection belongs to each existing auth endpoint, not reusable authentication dependencies. Test-only query routes prove legitimate filters still authenticate and revalidate identity/fingerprint; no real business routes added.
+- Framework headers (notably 405 Allow) survive sanitized HTTP errors; Cache-Control remains no-store even if an exception supplies a permissive cache header.
+- Remediation verification: 92 focused HTTP/launcher tests and 405 full regression tests passed, diff check clean. Stage 27–29 scheduling services/schema are unchanged.
+- Tests use isolated temporary DBs, ASGI clients, fake clocks and mocked launcher startup, not production deployment verification.
+
+Limits and exclusions:
+- Local-only, single-process in-memory sessions/rate limits/selection contexts; no restart durability or multi-worker support. Production auth, HTTPS, shared atomic storage and persistent migrations remain deferred.
+- Trusted local OS/filesystem boundary; supported launcher safeguards do not certify arbitrary ASGI configurations. Cross-resource crash atomicity and retroactive revocation of in-flight authorized work are not guaranteed.
+- Non-blocking hardening: Argon2 work-factor bounds, slow-body/concurrent-request resource controls, safe unexpected-error diagnostics and additional logout/rotation race coverage. Stage 29 timezone/DST, integer settings and lazy selection-context cleanup notes remain.
+- Search ownership execution, booking/calendar HTTP APIs, frontend, cancellation/rescheduling commands and AI/Chat remain unimplemented. ANY Alternative Discovery remains unsupported. No Stage 30B.2 work has started.
+- Future owner edits are staff/date/time only; services, customer identity, manual price and notes changes are excluded from MVP rescheduling. Cancellation, rescheduling, owner-override and repricing rules still need approval; no new policy is inferred.
 
 ## Important Technical Definitions
 
@@ -584,17 +645,16 @@ one isolated business/customer organization inside the SaaS.
 
 ## Current Next Step
 
-The old "Appointment Service — Contract Design" next step is superseded by the
-completed Stage 27/28 implementation and Stage 29 work described above.
+The old Appointment Service design and Stage 29 post-merge checkpoint instructions
+are historical and complete; Stage 30B.1 now waits at the documentation/PR gate.
 
-The Stage 29 documentation review, PR #2 approval, regular merge into main,
-and post-merge regression/state verification have all been completed.
+1. Complete the authorized three-document checkpoint commit/push and Stage 30B.1 feature PR for architecture review. Do not merge or enable auto-merge.
+2. Await explicit merge approval; after an approved merge, synchronize main, rerun regression and record a post-merge checkpoint. Retain the feature branch unless separately authorized otherwise.
+3. Intended Stage 30B.2 direction is authenticated booking/discovery/selection HTTP boundaries reusing existing domain services, including trusted customer/tenant and search-context ownership. Exact endpoint/slice contracts still require review and approval. No implementation starts automatically.
 
-1. Review this post-merge checkpoint update in the three context documents.
-2. Commit/push the documentation update only after explicit approval.
-3. Select and approve the next feature milestone separately; none has been selected or approved. Do not begin Stage 30 automatically.
-
-This documentation task creates no PR, deletes no branches, and starts no further feature work.
+Future customer/owner interfaces must use the same real backend and development DB.
+Owner calendar/create/cancel/reschedule and frontend are future milestones, not
+implemented authentication features. AI/Chat remains excluded. No production-readiness claim.
 
 ## Context Safety Rule
 
