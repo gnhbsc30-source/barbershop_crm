@@ -2,19 +2,18 @@
 
 This file records decisions that should survive conversation changes.
 
-Current post-merge checkpoint (2026-10-20): Stage 29 is implemented, reviewed,
-merged into `main`, and verified through [PR #2](https://github.com/gnhbsc30-source/barbershop_crm/pull/2).
-Regular Merge Commit: `d6b4866461bab2ea13dd8a001b3101136110c26a`;
-local/remote `main` are synchronized, post-merge regression **167 passed, 0 failed**,
-and the working tree was clean before this documentation update.
-Historical source branch `feature/stage-29-alternative-discovery` is retained locally/remotely.
-Historical implementation HEAD: `6091baf8caea0aa005bba4e7271b285368da162d`;
-reviewed documentation/PR head: `47bdcea7f9fcf90832264ed652d35bb88d682a5f`;
-pre-merge `main`: `5846451000e8dc2ef75cb9605c63613295ef353e`. Final Audit verdict:
-**READY WITH NON-BLOCKING NOTES** for development/MVP scope, not production readiness.
-The Stage 29 pre-merge documentation review, PR approval, merge, and verification are complete.
-This post-merge documentation update awaits review before commit; the next feature milestone
-has not been selected or approved. ADR-027 through ADR-034 remain unchanged decisions.
+Current feature checkpoint (2026-10-20): Stage 30B.1 is implemented/reviewed on
+`feature/stage-30b1-auth-foundation`, not merged. Implementation/remediation HEAD:
+`24edf454379d142d9816131a83783b4c4e93ff32`; full regression **405 passed, 0 failed**;
+focused HTTP/launcher verification **92 passed**. The final audit's redirect blocker
+and approved query/header corrections are resolved; documentation/PR review is
+authorized, merge is not. This remains local development/MVP, not production ready.
+Base/local/remote `main` remains `2936be4013aa2b5c6440442ce49afec8eb3effcb`.
+Stage 29 was merged via [PR #2](https://github.com/gnhbsc30-source/barbershop_crm/pull/2),
+regular Merge Commit `d6b4866461bab2ea13dd8a001b3101136110c26a`, verified with 167 tests.
+Its historical audit/implementation facts remain in ADR-027 through ADR-034.
+ADR-035 onward records Stage 30 decisions, without changing scheduling contracts.
+Stage 30B.2 is not started; the next implementation contract requires approval.
 
 ## ADR-001 — Database Is the Source of Truth
 
@@ -502,10 +501,99 @@ No Stage 29 API routes, UI, Chat, or AI selection execution integration exists. 
 - Business-local timezone/DST hardening and consistent scheduling clocks remain future work. Aware-input rejection is the current deterministic boundary only.
 - Positive-value checks and SQLite INTEGER affinity do not fully enforce integer settings; fractional/text rejection needs hardening. No settings-write API exists yet.
 - Expired-context cleanup is lazy; unaccessed expired contexts may retain memory. Discovery remains unpaginated without production capacity controls/query optimization.
-- ANY Alternative Discovery, authentication/authorization integration, API/UI/Chat integration, cancellation, and rescheduling remain deferred.
+- At the Stage 29 checkpoint, ANY Alternative Discovery, authentication/authorization integration, API/UI/Chat integration, cancellation, and rescheduling were deferred. Stage 30B.1 now supplies development auth only on its feature branch (ADR-035 onward); booking/search ownership integration, business APIs, UI/Chat and cancellation/rescheduling execution are still deferred.
 - Audit follow-ups also include regression coverage for unexpected booking failure cleanup, concurrent independent searches, TTL during active booking, exact candidate datetime boundaries, and changed configuration between discovery and selection. These were non-blocking notes, not completed features/tests.
 
-**Verification history:** Final Audit at `ef8fdd4ebf50735c43a4e91e202c1072e9fb3d60`: 163 passed, READY WITH NON-BLOCKING NOTES. Reviewed aware-input fix at `6091baf8caea0aa005bba4e7271b285368da162d`: 167 passed. Stage 29 was then merged into `main` through [PR #2](https://github.com/gnhbsc30-source/barbershop_crm/pull/2) using regular Merge Commit `d6b4866461bab2ea13dd8a001b3101136110c26a`; post-merge regression: **167 passed, 0 failed**. The limitations above remain deferred after merge.
+**Verification history:** Final Audit at `ef8fdd4ebf50735c43a4e91e202c1072e9fb3d60`: 163 passed, READY WITH NON-BLOCKING NOTES. Reviewed aware-input fix at `6091baf8caea0aa005bba4e7271b285368da162d`: 167 passed. Stage 29 was then merged into `main` through [PR #2](https://github.com/gnhbsc30-source/barbershop_crm/pull/2) using regular Merge Commit `d6b4866461bab2ea13dd8a001b3101136110c26a`; post-merge regression: **167 passed, 0 failed**. The later Stage 29 documentation checkpoint is `2936be4013aa2b5c6440442ce49afec8eb3effcb`. Its production limitations remain unless explicitly superseded below.
+
+---
+
+## ADR-035 — Provisioned Development Identities and Credential Truth
+
+**Decision:** Local MVP authentication uses explicitly provisioned synthetic OWNER and CUSTOMER identities with random access codes, not client-selected roles or hardcoded credentials.
+
+- Immutable Principal contains a namespaced subject, business ID and either owner user ID or linked customer ID. OWNER must be an active OWNER user in an active business. CUSTOMER must be an active customer account linked to an active same-business customer; CUSTOMER is not a staff role.
+- Server-side IdentityReference selects account kind/business/account ID. Account IDs and customer IDs are distinct; `user:1` and `customer_account:1` are different subjects. Caller IDs, role labels or search IDs never authorize access.
+- Authentication validates DB identity truth; a provisioning manifest is a private locator, not a substitute for DB validation. Repository reads are tenant-scoped and persistence-only; no schema change is needed.
+- Credentials are `<16-character public selector>.<43-character random secret>` using cryptographic randomness (96-bit selector, 256-bit secret). Strict parsing and generic INVALID_CREDENTIALS errors avoid identity disclosure; unknown/invalid mapped identities receive dummy verification when a well-formed code reaches credential verification.
+- Argon2id generation uses 19 MiB, time cost 2, parallelism 1, 16-byte salt and 32-byte hash. Actual verification validates payloads; metadata inspection alone is not payload validation or work-factor hardening.
+- `app/services/authentication.py` owns these stateless identity/credential functions. It contains no HTTP, session lifecycle or rate-limit state.
+
+**Status:** Implemented on the Stage 30B.1 feature branch only; not production authentication/onboarding.
+
+---
+
+## ADR-036 — Absolute Sessions, Fresh Identity Binding and Bounded Attempts
+
+**Decision:** Keep independent, locked application-scoped session and rate-limit state in `app/core/auth_sessions.py` and `app/core/auth_rate_limit.py`.
+
+- Session tokens and session-bound CSRF tokens are independent cryptographically random values. Store only SHA-256 token keys; frozen context includes Principal, fingerprint, CSRF token and timestamps. Default live-session capacity is 1024.
+- Absolute one-hour TTL uses an injectable aware clock: valid before expires_at, invalid at/after it. No sliding renewal. Successful login replaces the presented existing session only after credential verification; failed login leaves it intact. Logout invalidates only the authenticated session.
+- A credential fingerprint is SHA-256 of the exact stored credential hash verified by login, not a second potentially changed DB read. It is an internal change detector, not a public credential.
+- HTTP authentication freshly revalidates tenant/account/business activity, OWNER role or CUSTOMER link, selector, Principal and fingerprint. Replacement hashes and changed bindings invalidate old sessions on revalidation; sessions cannot adopt new credentials silently. This does not retract already-authorized in-flight work.
+- Rate limits admit at most five attempts per selector/five minutes and twenty globally/minute, counting successes too. Unknown/malformed selectors count before costly verification. Denied attempts do not extend windows; expired window entries are pruned at exact boundaries. State is bounded and operations atomic under locks.
+- Infrastructure does not query the DB or own authorization decisions. HTTP dependencies compose fresh identity reads with store checks; SQLite connection creation/use/closure stays in one sync worker.
+
+---
+
+## ADR-037 — Explicit Provisioning, Private Manifest and Manual Rotation
+
+**Decision:** Development provisioning and rotation are explicit terminal commands in `app/dev_data.py`, never startup repair/reset or public HTTP endpoints.
+
+- Only the configured dedicated `data/dev/barbershop.db` in development mode is accepted by the CLI. Private owner-controlled directory/files, symlink checks and an exclusive provisioning lock guard creation. Runtime DB/manifest are ignored, never committed.
+- Explicit synthetic seed contains one business, OWNER, CUSTOMER, two staff/services, compatibility assignments, schedules and settings using the canonical schema. Known unchanged reruns preserve appointments/data and do not regenerate credentials. Unknown, incomplete or inconsistent data is refused without automatic reset.
+- The private manifest contains selectors, trusted account references, schema fingerprint and non-secret fixture metadata; no raw codes, session tokens or password hashes. Identity still requires current DB validation.
+- Manual rotation requires `ROTATE <selector>` confirmation for an existing provisioned identity. It generates a fresh high-entropy secret, hashes with Argon2id and conditionally replaces the expected previous hash within a short DB-layer transaction. No appointment, schedule, service or customer record is changed.
+- Credential changes reject existing sessions at subsequent fingerprint validation, including sessions in a running application; no shared session-reset registry is needed.
+- Secrets are delivered only to the confirmed terminal after commit, not ordinary logs. Interrupted delivery requires another explicit rotation; no old-secret restoration, hardcoded fallback or automatic reset.
+- SQLite and manifest writes are not cross-resource atomic. A partially created DB/manifest may remain after interruption; startup/reruns fail closed and require explicit recovery. File fsync is not a database-plus-manifest atomic commit guarantee.
+
+---
+
+## ADR-038 — Same-Origin, Loopback-Only Development HTTP Authentication
+
+**Decision:** Expose only three auth endpoints plus health under an explicitly local HTTP security boundary.
+
+- POST /api/v1/auth/dev-session accepts only a strict access_code JSON body; exact Origin, `X-CSRF-Protection: 1` and JSON Content-Type are required. Retained body bytes are bounded to 4096 before validation; attempt accounting precedes Argon2 work.
+- GET /api/v1/auth/me returns freshly validated Principal, absolute expiry and CSRF token. DELETE /api/v1/auth/session requires exact Origin and its session-bound X-CSRF-Token, then invalidates that session and clears its cookie.
+- Session token is cookie-only: host-only, HttpOnly, SameSite=Strict, Path=/, Max-Age=3600. `Secure=False` is permitted only for this approved local HTTP development boundary, not production.
+- Require exact Host `127.0.0.1:8000`, loopback client address and HTTP scheme; reject unexpected/duplicate Host/Origin and CSRF headers. No permissive CORS or trust in caller-forwarded client IPs.
+- Cache-Control: no-store is enforced on responses. Error bodies do not echo validation input or exception detail; raw credential/token/hash material is not sent to ordinary exception logs. Protocol headers such as 405 Allow are preserved while no-store overrides permissive cache headers.
+
+---
+
+## ADR-039 — Explicit Routes and Endpoint-Owned Query Validation
+
+**Decision:** Disable FastAPI application-level automatic trailing-slash redirects. Wrong slash variants/unknown paths fail safely instead of reflecting caller query values into Location headers; no custom redirect rewriting is introduced.
+
+- All three auth endpoints reject unexpected query parameters with INVALID_REQUEST. Login retains rate-limit accounting before that query rejection.
+- Reusable authentication/role dependencies validate identity/authorization, not arbitrary endpoint query schemas. Future business GET endpoints may define legitimate query parameters without bypassing fresh identity/fingerprint checks.
+- Test-only probe routes establish this reuse; no business API is introduced by the tests.
+
+**Audit remediation:** `24edf454379d142d9816131a83783b4c4e93ff32` resolves the reproduced redirect blocker and approved query/header findings. Verification: 92 focused HTTP/launcher tests and 405 full regression tests passed; diff check clean. Guards, cookie lifecycle and Stage 27–29 behavior remain intact.
+
+---
+
+## ADR-040 — Thin Composition and Single-Worker Development Limits
+
+**Decision:** `app/main.py` only composes FastAPI lifespan, middleware, handlers/router and health. Identity verification, SQL, sessions, rate limits and domain rules stay in their responsible modules; no factories/framework layers are added.
+
+- App lifespan validates pre-provisioned data and installs one session store and limiter per app instance; it never creates credentials or seeds a DB.
+- Supported launcher is `python -m app.dev_server`: 127.0.0.1:8000, one worker, no reload, proxy trust or access logs. Startup checks development mode, WEB_CONCURRENCY and private recognized data. Arbitrary external ASGI launch settings are not certified by these checks.
+- In-memory sessions/rate limits and selection contexts are process-local/non-durable; multi-worker deployment requires shared atomic storage. Local HTTP and private OS files assume a trusted development machine. HTTPS, production identity lifecycle and distributed infrastructure remain future work.
+- SQLite is temporary, with no migrations or production DB infrastructure. Existing Stage 29 timezone/DST, settings integer enforcement and lazy selection-context cleanup limitations remain.
+- Non-blocking hardening remains: stored Argon2 parameter bounds, safe diagnostics for unexpected errors, slow-body/concurrent-request resource limits, and additional logout/rotation race coverage. Login buffering is bounded, not a complete network DoS defense.
+- No frontend, booking/calendar HTTP APIs, search-ownership execution, cancellation/rescheduling commands, ANY Alternative Discovery or AI/Chat integration is provided by this foundation. It is not production readiness.
+
+---
+
+## ADR-041 — Future MVP Owner Editing Is Staff/Date/Time Only
+
+**Decision:** The approved future owner-editing/rescheduling boundary allows changing staff, date and time only. Services, customer identity, manual prices and notes are excluded from MVP rescheduling.
+
+**Status:** Scope decision only, not implemented by Stage 30B.1. Both future customer/owner interfaces must share the real backend/development DB. Cancellation cutoffs, rescheduling/status-transition policy, owner overrides and repricing remain undecided; this ADR does not approve those policies or infer a cancellation/rescheduling command implementation.
+
+**Next:** Stage 30B.2 is intended to address the authenticated business API boundary in separate reviewable slices; exact contracts need approval. Do not start it automatically or merge Stage 30B.1 without explicit approval.
 
 ---
 
