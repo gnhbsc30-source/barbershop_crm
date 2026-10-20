@@ -196,12 +196,34 @@ def resolve_principal(connection, identity: IdentityReference) -> Principal:
     return _principal_from_account(identity, _read_account(connection, identity))
 
 
+def resolve_identity_with_fingerprint(
+    connection, identity: IdentityReference, *, expected_selector: str,
+) -> tuple[Principal, str]:
+    """Return identity and fingerprint from the same current database record."""
+    if not isinstance(identity, IdentityReference):
+        raise AuthenticationError()
+    account = _read_account(connection, identity)
+    principal = _principal_from_account(identity, account)
+    if account["username"] != expected_selector:
+        raise AuthenticationError()
+    return principal, credential_fingerprint(account["password_hash"])
+
+
 def authenticate_access_code(
     connection,
     access_code: str,
     provisioned_identities: Mapping[str, IdentityReference],
 ) -> Principal:
     """Authenticate only selectors in the supplied trusted provisioning mapping."""
+    return authenticate_access_code_with_fingerprint(connection, access_code, provisioned_identities)[0]
+
+
+def authenticate_access_code_with_fingerprint(
+    connection,
+    access_code: str,
+    provisioned_identities: Mapping[str, IdentityReference],
+) -> tuple[Principal, str]:
+    """Bind a login to the exact hash verified, never a second later DB read."""
     selector, secret = parse_access_code(access_code)
     identity = provisioned_identities.get(selector)
     if not isinstance(identity, IdentityReference):
@@ -217,4 +239,4 @@ def authenticate_access_code(
         raise AuthenticationError() from None
     if not verify_access_secret(account["password_hash"], secret):
         raise AuthenticationError()
-    return principal
+    return principal, credential_fingerprint(account["password_hash"])

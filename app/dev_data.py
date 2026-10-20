@@ -123,6 +123,21 @@ def _fixture() -> dict:
     }
 
 
+def validate_development_data(path: Path, *, environment: str) -> dict[str, IdentityReference]:
+    """Read-only startup validation; no provisioning, prompts, repair or reset."""
+    identities = load_provisioned_identities(path, environment=environment)
+    path = _guard_path(path, environment)
+    try:
+        with closing(database.open_development_database(path)) as connection:
+            manifest = _read_manifest(path)
+            _validate_references(connection, manifest)
+            if repositories.get_development_fixture_snapshot(connection, manifest["business_id"]) != manifest["fixture"]:
+                raise DevelopmentDataError("DEVELOPMENT_DATA_INCONSISTENT")
+    except (sqlite3.Error, ValueError, KeyError, TypeError, OSError):
+        raise DevelopmentDataError("DEVELOPMENT_DATA_INCONSISTENT") from None
+    return identities
+
+
 @contextmanager
 def _provision_lock(path: Path):
     descriptor = os.open(path.parent / ".provision.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -174,15 +189,7 @@ def provision_development_data(
     if os.path.lexists(path) != os.path.lexists(manifest_path):
         raise DevelopmentDataError("UNKNOWN_OR_INCOMPLETE_DEVELOPMENT_DATA")
     if path.exists():
-        identities = load_provisioned_identities(path, environment=environment)
-        try:
-            with closing(database.open_development_database(path)) as connection:
-                manifest = _read_manifest(path)
-                _validate_references(connection, manifest)
-                if repositories.get_development_fixture_snapshot(connection, manifest["business_id"]) != manifest["fixture"]:
-                    raise DevelopmentDataError("DEVELOPMENT_DATA_INCONSISTENT")
-        except (sqlite3.Error, ValueError, KeyError, TypeError):
-            raise DevelopmentDataError("DEVELOPMENT_DATA_INCONSISTENT") from None
+        identities = validate_development_data(path, environment=environment)
         if not input_stream.isatty() or not output_stream.isatty():
             raise DevelopmentDataError("INTERACTIVE_TERMINAL_REQUIRED")
         output_stream.write("Recognized dataset unchanged; credentials were not regenerated.\n")
