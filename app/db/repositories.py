@@ -45,6 +45,96 @@ def get_customer_account_identity(
     return dict(row) if row else None
 
 
+def replace_account_credential(
+    connection: Connection, *, account_kind: str, business_id: int,
+    account_id: int, username: str, expected_hash: str, new_hash: str,
+) -> bool:
+    """Conditional persistence only; caller verifies identity and owns transaction."""
+    tables = {"user": "users", "customer_account": "customer_accounts"}
+    if account_kind not in tables:
+        raise ValueError("INVALID_ACCOUNT_KIND")
+    cursor = connection.execute(
+        f"""UPDATE {tables[account_kind]}
+            SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE business_id = ? AND id = ? AND username = ? AND password_hash = ?""",
+        (new_hash, business_id, account_id, username, expected_hash),
+    )
+    return cursor.rowcount == 1
+
+
+def create_development_fixture(
+    connection: Connection, *, fixture: dict[str, Any],
+    owner_username: str, owner_hash: str, customer_username: str, customer_hash: str,
+) -> int:
+    """Insert the explicit synthetic dataset; no reset, policy or commit."""
+    business_id = connection.execute(
+        "INSERT INTO businesses (business_name, timezone) VALUES (?, ?)",
+        (fixture["business_name"], fixture["timezone"]),
+    ).lastrowid
+    connection.execute(
+        "INSERT INTO users (business_id, username, password_hash, role) VALUES (?, ?, ?, 'OWNER')",
+        (business_id, owner_username, owner_hash),
+    )
+    customer_id = connection.execute(
+        "INSERT INTO customers (business_id, name, email, customer_type) VALUES (?, ?, ?, 'REGISTERED')",
+        (business_id, fixture["customer_name"], fixture["customer_email"]),
+    ).lastrowid
+    connection.execute(
+        "INSERT INTO customer_accounts (business_id, customer_id, username, password_hash) VALUES (?, ?, ?, ?)",
+        (business_id, customer_id, customer_username, customer_hash),
+    )
+    staff_ids = [connection.execute(
+        "INSERT INTO staff (business_id, name) VALUES (?, ?)", (business_id, name),
+    ).lastrowid for name in fixture["staff_names"]]
+    service_ids = [connection.execute(
+        "INSERT INTO services (business_id, name, default_duration_minutes, default_price) VALUES (?, ?, ?, ?)",
+        (business_id, name, duration, price),
+    ).lastrowid for name, duration, price in fixture["services"]]
+    for staff_id in staff_ids:
+        for service_id in service_ids:
+            connection.execute(
+                "INSERT INTO staff_services (business_id, staff_id, service_id) VALUES (?, ?, ?)",
+                (business_id, staff_id, service_id),
+            )
+    for day in range(7):
+        working = int(day in fixture["working_days"])
+        start, end = (fixture["start_time"], fixture["end_time"]) if working else (None, None)
+        connection.execute(
+            "INSERT INTO business_working_hours (business_id, day_of_week, is_working_day, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+            (business_id, day, working, start, end),
+        )
+        for staff_id in staff_ids:
+            connection.execute(
+                "INSERT INTO working_hours (staff_id, day_of_week, is_working_day, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+                (staff_id, day, working, start, end),
+            )
+    connection.execute(
+        """INSERT INTO business_settings (business_id, booking_window_months,
+           minimum_booking_notice_minutes, alternative_search_window_days, booking_interval_minutes)
+           VALUES (?, ?, ?, ?, ?)""",
+        (business_id, *fixture["booking_settings"]),
+    )
+    return business_id
+
+
+def get_development_fixture_snapshot(connection: Connection, business_id: int) -> dict[str, Any]:
+    """Non-secret fixture records; appointments and credential hashes are excluded."""
+    queries = {
+        "businesses": "SELECT id, business_name, timezone, is_active FROM businesses WHERE id = ? ORDER BY id",
+        "users": "SELECT id, business_id, username, role, is_active FROM users WHERE business_id = ? ORDER BY id",
+        "customers": "SELECT id, business_id, name, email, customer_type, is_active FROM customers WHERE business_id = ? ORDER BY id",
+        "customer_accounts": "SELECT id, business_id, customer_id, username, is_active FROM customer_accounts WHERE business_id = ? ORDER BY id",
+        "staff": "SELECT id, business_id, name, is_active FROM staff WHERE business_id = ? ORDER BY id",
+        "services": "SELECT id, business_id, name, default_duration_minutes, default_price, is_active FROM services WHERE business_id = ? ORDER BY id",
+        "staff_services": "SELECT id, business_id, staff_id, service_id, duration_minutes, price, is_active FROM staff_services WHERE business_id = ? ORDER BY id",
+        "business_working_hours": "SELECT id, business_id, day_of_week, is_working_day, start_time, end_time FROM business_working_hours WHERE business_id = ? ORDER BY id",
+        "working_hours": "SELECT h.id, h.staff_id, h.day_of_week, h.is_working_day, h.start_time, h.end_time FROM working_hours h JOIN staff s ON s.id = h.staff_id WHERE s.business_id = ? ORDER BY h.id",
+        "business_settings": "SELECT id, business_id, booking_window_months, minimum_booking_notice_minutes, alternative_search_window_days, booking_interval_minutes FROM business_settings WHERE business_id = ? ORDER BY id",
+    }
+    return {name: [dict(row) for row in connection.execute(query, (business_id,)).fetchall()]
+            for name, query in queries.items()}
+
+
 def create_customer(
     connection: Connection,
     business_id: int,

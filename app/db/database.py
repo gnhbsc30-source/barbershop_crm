@@ -1,4 +1,5 @@
 import sqlite3
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -42,6 +43,27 @@ def initialize_database() -> None:
 def close_connection(connection: sqlite3.Connection) -> None:
     """Close a SQLite database connection."""
     connection.close()
+
+
+def open_development_database(path: Path, *, create: bool = False) -> sqlite3.Connection:
+    """Explicit dev-tool connection; never adopt/create a DB by accident.
+
+    The caller validates the dedicated private development path. Existing normal
+    application connection and initialization behavior stays unchanged.
+    """
+    if create:
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(descriptor)
+    connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        if create:
+            connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    except BaseException:
+        connection.close()
+        raise
+    return connection
 
 
 @contextmanager
