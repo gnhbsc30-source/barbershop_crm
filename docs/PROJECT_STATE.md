@@ -7,11 +7,11 @@
 
 **Phase:** Clean Architecture Foundation → Appointment Domain
 
-**Current milestone:** Stage 29 — Alternative Discovery and Selection Execution implemented and reviewed on `feature/stage-29-alternative-discovery`. Stage 29 has NOT yet merged into `main`.
+**Current milestone:** Stage 29 — Alternative Discovery and Selection Execution implemented, reviewed, merged into `main`, and verified. [PR #2](https://github.com/gnhbsc30-source/barbershop_crm/pull/2) used a regular Merge Commit, preserving the feature history.
 
 **Audit verdict:** READY WITH NON-BLOCKING NOTES for the approved development/MVP scope; this is not a production-readiness claim. The subsequent deterministic datetime validation fix is reviewed and verified.
 
-**Next steps:** documentation review, approved documentation commit/push, PR into `main`, approved merge, then post-merge verification. No later feature milestone has been selected.
+**Next steps:** Review this post-merge documentation checkpoint; commit/push only after explicit approval. The next feature milestone has not been selected or approved.
 
 **STOP RULE:** Do not start the next milestone until the current milestone is explicitly considered complete and the user agrees to continue.
 
@@ -47,13 +47,15 @@ Latest known test result:
 
 Git checkpoint:
 - Checkpoint date: 2026-10-20
-- Branch: `feature/stage-29-alternative-discovery`
-- Verified implementation HEAD: `6091baf8caea0aa005bba4e7271b285368da162d`
-- `main` remains at `5846451000e8dc2ef75cb9605c63613295ef353e` (Stage 28 baseline plus documentation).
-- Feature branch is 9 commits ahead of `main`, 0 behind at this checkpoint.
-- Stage 29 is NOT yet merged into `main`.
+- Branch: `main`
+- Verified merge commit / local and remote `main`: `d6b4866461bab2ea13dd8a001b3101136110c26a` (synchronized).
+- Merged PR: https://github.com/gnhbsc30-source/barbershop_crm/pull/2
+- Post-merge full regression: **167 passed, 0 failed**. Stage 29 changes are present on `main`; no unexpected local/remote differences were found.
+- Historical source branch: `feature/stage-29-alternative-discovery`, retained locally and remotely.
+- Historical implementation HEAD: `6091baf8caea0aa005bba4e7271b285368da162d`; reviewed documentation/PR head: `47bdcea7f9fcf90832264ed652d35bb88d682a5f`.
+- Historical pre-merge `main`: `5846451000e8dc2ef75cb9605c63613295ef353e` (Stage 28 baseline plus documentation).
 - GitHub: https://github.com/gnhbsc30-source/barbershop_crm
-- Working tree was clean at the implementation checkpoint; this documentation update is pending review and is not committed yet. The HEAD above identifies the verified code, not a future documentation commit.
+- Working tree was clean at post-merge verification. Only this three-document checkpoint update is now pending review and uncommitted. The SHA above identifies the verified merge, not a future documentation commit.
 
 ## 3. What Has Been Completed
 
@@ -176,6 +178,7 @@ Historical milestones and current verification:
 - Availability tests use a reusable future-Monday helper rather than brittle hardcoded dates.
 - **Availability suite: 23 passed**
 - **Stage 29 current full suite: 167 passed, 0 failed**
+- **Stage 29 implemented, reviewed, merged into `main` through PR #2, and verified** at `d6b4866461bab2ea13dd8a001b3101136110c26a`.
 
 ### Stage 29 — Alternative Discovery and Selection Execution
 - `app/services/alternatives.py` owns SPECIFIC-staff discovery separately from AppointmentService. `requested_staff_id=None` is explicitly unsupported.
@@ -196,7 +199,8 @@ Historical milestones and current verification:
 
 ### Stage 29 Final Audit
 - Reviewed verdict: **READY WITH NON-BLOCKING NOTES**. Audit baseline: 163 passing tests at `ef8fdd4ebf50735c43a4e91e202c1072e9fb3d60`.
-- Follow-up fix: aware discovery requests now fail deterministically with `INVALID_DATETIME`; UTC and positive/negative offsets are tested alongside naive requests. Current verification: **167 passed** at `6091baf8caea0aa005bba4e7271b285368da162d`.
+- Follow-up fix: aware discovery requests now fail deterministically with `INVALID_DATETIME`; UTC and positive/negative offsets are tested alongside naive requests. Historical feature verification: **167 passed** at `6091baf8caea0aa005bba4e7271b285368da162d`.
+- Post-merge verification: **167 passed, 0 failed** on `main` at `d6b4866461bab2ea13dd8a001b3101136110c26a`. The regular Merge Commit preserves all approved feature commits; the audit's development/MVP limitations still apply.
 - Remaining notes: integer-type settings hardening, lazy expired-context cleanup, duplicated but currently consistent booking-policy checks, and additional regression scenarios for unexpected failures, concurrent independent searches, expiry during booking, and configuration changes between discovery/selection.
 
 ### Deferred capabilities and production limitations
@@ -359,14 +363,12 @@ Still unresolved unless explicitly changed later:
 - presentation/truncation of ranked alternatives and ANY discovery semantics beyond the implemented SPECIFIC contract
 - timezone handling strategy for all scheduling flows
 
-## 10. Next Steps Before Merge
+## 10. Post-Merge Checkpoint and Next Milestone
 
-Stage 28 is merged. Stage 29 implementation and final audit are reviewed on the feature branch; Stage 29 has NOT yet merged into `main`.
+Stage 29 implementation, final audit, and pre-merge documentation review are complete. PR #2 is merged into `main` using regular Merge Commit `d6b4866461bab2ea13dd8a001b3101136110c26a`; post-merge regression passed with 167 tests. Local/remote `main` are synchronized, and the feature branch was retained.
 
-1. Review the three updated context documents for architecture approval.
-2. Commit/push the documentation only after explicit approval.
-3. Open a Stage 29 PR into `main` when authorized; review its full diff and checks.
-4. Merge only after approval.
-5. Update local `main`, verify the working tree, confirm Stage 29 is included, and run full regression again. Record the actual merge/post-merge checkpoint.
+1. Review these post-merge checkpoint documentation changes for architecture approval.
+2. Commit/push this documentation update only after explicit approval.
+3. Select and approve the next feature milestone separately; none has been selected or approved. Do not begin Stage 30 automatically.
 
-No PR has been opened or merge performed as part of this documentation task. No subsequent feature milestone is authorized by this file.
+The Stage 29 PR/merge workflow is complete. This documentation task does not create another PR, delete branches, or authorize further feature work. Completed Stage 29 MVP/domain functionality does not imply production readiness or API/UI/AI/Chat integration.

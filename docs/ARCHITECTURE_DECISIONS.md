@@ -2,13 +2,19 @@
 
 This file records decisions that should survive conversation changes.
 
-Current checkpoint (2026-10-20): Stage 29 is implemented and reviewed on
-`feature/stage-29-alternative-discovery`, implementation HEAD
-`6091baf8caea0aa005bba4e7271b285368da162d`, full regression **167 passed**.
-Stage 29 has NOT yet merged into `main`; `main` remains at
-`5846451000e8dc2ef75cb9605c63613295ef353e`. Final Audit verdict:
+Current post-merge checkpoint (2026-10-20): Stage 29 is implemented, reviewed,
+merged into `main`, and verified through [PR #2](https://github.com/gnhbsc30-source/barbershop_crm/pull/2).
+Regular Merge Commit: `d6b4866461bab2ea13dd8a001b3101136110c26a`;
+local/remote `main` are synchronized, post-merge regression **167 passed, 0 failed**,
+and the working tree was clean before this documentation update.
+Historical source branch `feature/stage-29-alternative-discovery` is retained locally/remotely.
+Historical implementation HEAD: `6091baf8caea0aa005bba4e7271b285368da162d`;
+reviewed documentation/PR head: `47bdcea7f9fcf90832264ed652d35bb88d682a5f`;
+pre-merge `main`: `5846451000e8dc2ef75cb9605c63613295ef353e`. Final Audit verdict:
 **READY WITH NON-BLOCKING NOTES** for development/MVP scope, not production readiness.
-Documentation review, PR, approved merge, and post-merge verification remain next.
+The Stage 29 pre-merge documentation review, PR approval, merge, and verification are complete.
+This post-merge documentation update awaits review before commit; the next feature milestone
+has not been selected or approved. ADR-027 through ADR-034 remain unchanged decisions.
 
 ## ADR-001 — Database Is the Source of Truth
 
@@ -499,7 +505,7 @@ No Stage 29 API routes, UI, Chat, or AI selection execution integration exists. 
 - ANY Alternative Discovery, authentication/authorization integration, API/UI/Chat integration, cancellation, and rescheduling remain deferred.
 - Audit follow-ups also include regression coverage for unexpected booking failure cleanup, concurrent independent searches, TTL during active booking, exact candidate datetime boundaries, and changed configuration between discovery and selection. These were non-blocking notes, not completed features/tests.
 
-**Verification:** Final Audit at `ef8fdd4ebf50735c43a4e91e202c1072e9fb3d60`: 163 passed, READY WITH NON-BLOCKING NOTES. Reviewed aware-input fix at `6091baf8caea0aa005bba4e7271b285368da162d`: 167 passed. Stage 29 remains on the feature branch, not merged into main.
+**Verification history:** Final Audit at `ef8fdd4ebf50735c43a4e91e202c1072e9fb3d60`: 163 passed, READY WITH NON-BLOCKING NOTES. Reviewed aware-input fix at `6091baf8caea0aa005bba4e7271b285368da162d`: 167 passed. Stage 29 was then merged into `main` through [PR #2](https://github.com/gnhbsc30-source/barbershop_crm/pull/2) using regular Merge Commit `d6b4866461bab2ea13dd8a001b3101136110c26a`; post-merge regression: **167 passed, 0 failed**. The limitations above remain deferred after merge.
 
 ---
 

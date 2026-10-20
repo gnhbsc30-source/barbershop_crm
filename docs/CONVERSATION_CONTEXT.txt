@@ -1,29 +1,34 @@
 # Barbershop CRM — Conversation Context Archive
 # Curated recovery context, not a literal transcript of every chat message.
 
-## Current Verified Checkpoint — 2026-10-20
+## Current Verified Post-Merge Checkpoint — 2026-10-20
 
 Project path: /Users/aminadavyamin/Documents/Projects/barbershop_crm
-Branch: feature/stage-29-alternative-discovery
-Verified implementation HEAD: 6091baf8caea0aa005bba4e7271b285368da162d
-main: 5846451000e8dc2ef75cb9605c63613295ef353e
+Branch: main
+Verified merge commit: d6b4866461bab2ea13dd8a001b3101136110c26a
+Local and remote main: d6b4866461bab2ea13dd8a001b3101136110c26a (synchronized)
+Merged PR #2: https://github.com/gnhbsc30-source/barbershop_crm/pull/2
 GitHub: https://github.com/gnhbsc30-source/barbershop_crm
-Full regression: 167 passed, 0 failed.
-The feature branch is 9 commits ahead of main, 0 behind at this checkpoint.
+Post-merge full regression: 167 passed, 0 failed.
+Stage 29 changes are present on main with no unexpected local/remote differences.
 
-Stage 29 Alternative Discovery and Selection Execution is implemented and reviewed
-on the feature branch. Stage 29 has NOT yet merged into main.
+Stage 29 Alternative Discovery and Selection Execution is implemented, reviewed,
+merged into main, and verified. A regular Merge Commit preserved the feature history.
 Final Audit verdict: READY WITH NON-BLOCKING NOTES for the development/MVP scope;
 this is not a production-readiness claim.
 The audit checkpoint had 163 passing tests at ef8fdd4ebf50735c43a4e91e202c1072e9fb3d60.
 The reviewed deterministic aware-datetime rejection fix raised the suite to 167.
 
-The working tree was clean at the implementation checkpoint. The three context
-documents are now being updated for review, without an automatic commit.
-The HEAD above identifies the verified implementation, not a future docs commit.
-Next: documentation review/approval, approved documentation commit/push, PR into
-main when authorized, approved merge, and post-merge regression/state verification.
-No later feature milestone is selected. This document does not authorize a PR or merge.
+Historical source branch: feature/stage-29-alternative-discovery, retained locally/remotely.
+Historical implementation HEAD: 6091baf8caea0aa005bba4e7271b285368da162d.
+Reviewed documentation/PR head: 47bdcea7f9fcf90832264ed652d35bb88d682a5f.
+Pre-merge main: 5846451000e8dc2ef75cb9605c63613295ef353e.
+The working tree was clean at post-merge verification. Only the three context
+documents are now being updated for post-merge review, without an automatic commit.
+The SHA above identifies the verified merge, not a future documentation commit.
+The pre-merge documentation review, PR approval, merge, and verification are complete.
+Next: review this post-merge checkpoint and commit/push it only after explicit approval.
+The next feature milestone has not been selected or approved; do not start Stage 30.
 
 ## Project Identity
 
@@ -488,7 +493,16 @@ Error order is PAST_DATETIME, MINIMUM_BOOKING_NOTICE_VIOLATION, then
 BOOKING_WINDOW_EXCEEDED. The subsequent Stage 28 documentation checkpoint is
 main at 5846451000e8dc2ef75cb9605c63613295ef353e.
 
-## Stage 29 — Implemented and Reviewed on the Feature Branch
+## Stage 29 — Implemented, Reviewed, Merged into Main, and Verified
+
+Historical implementation/review took place on feature/stage-29-alternative-discovery.
+The reviewed implementation HEAD was 6091baf8caea0aa005bba4e7271b285368da162d;
+documentation commit 47bdcea7f9fcf90832264ed652d35bb88d682a5f was the PR head.
+PR #2 (https://github.com/gnhbsc30-source/barbershop_crm/pull/2) is merged using
+regular Merge Commit d6b4866461bab2ea13dd8a001b3101136110c26a. Post-merge
+verification on main: 167 passed, 0 failed. The feature branch was retained.
+The functionality below is completed MVP/domain work; future API/UI/AI/Chat
+integration and production hardening remain separate deferred work.
 
 Discovery and eligibility:
 - AlternativeDiscoveryService is separate from AppointmentService. SPECIFIC requests only; requested_staff_id=None fails explicitly. Existing Availability ANY behavior does not imply ANY Alternative Discovery support.
@@ -529,8 +543,10 @@ Selection execution and concurrency:
 
 The reviewed Final Audit found no blockers within the approved development/MVP
 scope: READY WITH NON-BLOCKING NOTES. The aware-datetime TypeError noted in the
-audit was addressed by the reviewed fix at 6091baf8caea0aa005bba4e7271b285368da162d;
-current regression is 167 passed. This does not certify production readiness.
+audit was addressed by the reviewed fix at 6091baf8caea0aa005bba4e7271b285368da162d
+with 167 passing tests on the feature branch. PR #2 was subsequently merged into
+main at d6b4866461bab2ea13dd8a001b3101136110c26a and verified again with
+167 passed, 0 failed. This does not certify production readiness.
 
 Still deferred:
 - In-memory contexts/claims are single-process and require a shared store instance. Multi-worker deployment needs shared atomic storage. No Redis or durable context storage exists.
@@ -571,14 +587,14 @@ one isolated business/customer organization inside the SaaS.
 The old "Appointment Service — Contract Design" next step is superseded by the
 completed Stage 27/28 implementation and Stage 29 work described above.
 
-1. Review the three updated context documents for architecture approval.
-2. Commit/push documentation only after explicit approval.
-3. Open a Stage 29 PR from feature/stage-29-alternative-discovery into main when authorized.
-4. Review the PR diff/checks and merge only after approval.
-5. Update local main, confirm Stage 29 is included and the working tree is clean, run full regression, and record the actual merge/post-merge checkpoint.
-6. Select the next feature milestone after review; none is authorized yet.
+The Stage 29 documentation review, PR #2 approval, regular merge into main,
+and post-merge regression/state verification have all been completed.
 
-This documentation task does not create a PR or merge Stage 29.
+1. Review this post-merge checkpoint update in the three context documents.
+2. Commit/push the documentation update only after explicit approval.
+3. Select and approve the next feature milestone separately; none has been selected or approved. Do not begin Stage 30 automatically.
+
+This documentation task creates no PR, deletes no branches, and starts no further feature work.
 
 ## Context Safety Rule
 
