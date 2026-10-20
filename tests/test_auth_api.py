@@ -8,6 +8,7 @@ from threading import Barrier, get_ident
 from fastapi import Depends
 import pytest
 from starlette.testclient import TestClient
+from starlette.exceptions import HTTPException
 
 from app import dev_data
 from app.api import auth_dependencies
@@ -492,3 +493,127 @@ def test_malformed_known_selector_secret_cannot_bypass_selector_limit(client, ht
     for _ in range(5):
         assert login(client, f"{selector}.short").status_code == 422
     assert login(client, code).status_code == 429
+
+
+@pytest.mark.parametrize("method,path", [
+    ("POST", f"{AUTH}/dev-session/"),
+    ("DELETE", f"{AUTH}/session/"),
+    ("GET", f"{AUTH}/me/"),
+    ("POST", f"{AUTH}/unknown/"),
+])
+def test_noncanonical_auth_paths_never_redirect_or_reflect_queries(client, http_data, method, path):
+    assert login(client, http_data[2]["OWNER"]).status_code == 200
+    token = client.cookies[SESSION_COOKIE]
+    marker = "AUDIT_ONLY_SENSITIVE_VALUE"
+    response = client.request(
+        method, path, params={"access_code": marker, "session_token": marker},
+        headers={"Origin": DEVELOPMENT_ORIGIN, "Content-Type": "application/json"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "HTTP_ERROR"}}
+    assert "location" not in response.headers
+    assert marker not in response.text and marker not in str(response.headers)
+    assert response.headers["cache-control"] == "no-store"
+    assert "set-cookie" not in response.headers
+    assert client.cookies[SESSION_COOKIE] == token
+    assert client.get(f"{AUTH}/me").status_code == 200
+
+
+@pytest.mark.parametrize("method,path", [
+    ("POST", f"{AUTH}/dev-session"),
+    ("GET", f"{AUTH}/me"),
+    ("DELETE", f"{AUTH}/session"),
+])
+def test_all_auth_endpoints_reject_unexpected_queries_without_changing_session(client, http_data, method, path):
+    first = login(client, http_data[2]["OWNER"])
+    assert first.status_code == 200
+    token = client.cookies[SESSION_COOKIE]
+    attempts = len(app.state.auth_limiter._global)
+    response = client.request(
+        method, path, params={"unexpected": "AUDIT_ONLY_VALUE"},
+        headers={**LOGIN_HEADERS, "X-CSRF-Token": first.json()["csrf_token"]},
+        **({"json": {"access_code": http_data[2]["OWNER"]}} if method == "POST" else {}),
+    )
+    assert response.status_code == 422
+    assert response.json() == {"error": {"code": "INVALID_REQUEST"}}
+    assert "AUDIT_ONLY_VALUE" not in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert "set-cookie" not in response.headers
+    assert client.cookies[SESSION_COOKIE] == token
+    assert client.get(f"{AUTH}/me").status_code == 200
+    if method == "POST":
+        assert len(app.state.auth_limiter._global) == attempts + 1
+
+
+@pytest.mark.parametrize("role", ["OWNER", "CUSTOMER"])
+@pytest.mark.parametrize("change", ["identity", "fingerprint"])
+def test_shared_auth_accepts_endpoint_queries_and_still_revalidates(client, http_data, role, change):
+    existing = list(app.router.routes)
+
+    @app.get("/test-authenticated-query")
+    def query_probe(day: str, context=Depends(auth_dependencies.require_authenticated_session)):
+        return {"day": day, "subject": context.principal.subject, "business_id": context.principal.business_id}
+
+    try:
+        url = "/test-authenticated-query?day=2026-10-20"
+        assert client.get(url).status_code == 401
+        first = login(client, http_data[2][role])
+        assert first.status_code == 200
+        response = client.get(url)
+        assert response.status_code == 200
+        assert response.json() == {
+            "day": "2026-10-20", "subject": first.json()["principal"]["subject"], "business_id": 1,
+        }
+        assert response.headers["cache-control"] == "no-store"
+        assert "set-cookie" not in response.headers
+        table = "users" if role == "OWNER" else "customer_accounts"
+        if change == "identity":
+            execute(http_data[0], f"UPDATE {table} SET is_active = 0 WHERE id = 1")
+        else:
+            execute(http_data[0], f"UPDATE {table} SET password_hash = ? WHERE id = 1",
+                    (authentication.hash_access_secret("n" * 43),))
+        denied = client.get(url)
+        assert denied.status_code == 401
+        assert denied.json() == {"error": {"code": "UNAUTHENTICATED"}}
+        assert "Max-Age=0" in denied.headers["set-cookie"]
+        assert not app.state.auth_sessions._sessions
+    finally:
+        app.router.routes[:] = existing
+
+
+@pytest.mark.parametrize("method,path,allowed", [
+    ("GET", f"{AUTH}/dev-session", "POST"),
+    ("POST", f"{AUTH}/me", "GET"),
+    ("GET", f"{AUTH}/session", "DELETE"),
+])
+def test_method_not_allowed_preserves_framework_allow_header(client, method, path, allowed):
+    response = client.request(method, path, headers=LOGIN_HEADERS, follow_redirects=False)
+    assert response.status_code == 405
+    assert response.headers["allow"] == allowed
+    assert response.json() == {"error": {"code": "HTTP_ERROR"}}
+    assert response.headers["cache-control"] == "no-store"
+    assert "location" not in response.headers
+
+
+def test_http_exception_preserves_headers_but_redacts_details_and_forces_no_store(client, caplog):
+    existing = list(app.router.routes)
+    marker = "AUDIT_ONLY_SENSITIVE_EXCEPTION_DETAIL"
+
+    @app.get("/test-http-exception")
+    def exception_probe():
+        raise HTTPException(
+            status_code=405, detail=marker,
+            headers={"Allow": "POST", "Cache-Control": "public, max-age=3600"},
+        )
+
+    try:
+        response = client.get("/test-http-exception")
+        assert response.status_code == 405
+        assert response.headers["allow"] == "POST"
+        assert response.headers["cache-control"] == "no-store"
+        assert response.json() == {"error": {"code": "HTTP_ERROR"}}
+        assert marker not in response.text and marker not in str(response.headers)
+        assert marker not in caplog.text
+    finally:
+        app.router.routes[:] = existing

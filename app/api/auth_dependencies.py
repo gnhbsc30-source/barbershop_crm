@@ -64,8 +64,6 @@ def require_authenticated_session(request: Request) -> SessionContext:
     token = request.cookies.get(SESSION_COOKIE)
     store = request.app.state.auth_sessions
     try:
-        if request.query_params:
-            raise AuthHTTPError(422, "INVALID_REQUEST")
         context = store.resolve(token)
         matches = [(selector, reference) for selector, reference in request.app.state.auth_identities.items()
                    if reference.business_id == context.principal.business_id

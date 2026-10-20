@@ -66,7 +66,9 @@ async def validation_error_handler(request: Request, error: RequestValidationErr
 
 
 async def http_error_handler(request: Request, error: HTTPException):
-    return JSONResponse({"error": {"code": "HTTP_ERROR"}}, status_code=error.status_code, headers={"Cache-Control": "no-store"})
+    response = JSONResponse({"error": {"code": "HTTP_ERROR"}}, status_code=error.status_code, headers=error.headers)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 async def unexpected_error_handler(request: Request, error: Exception):
@@ -80,6 +82,12 @@ AUTH_EXCEPTION_HANDLERS = {
     HTTPException: http_error_handler,
     Exception: unexpected_error_handler,
 }
+
+
+def reject_auth_query_parameters(request: Request) -> None:
+    """These auth endpoints accept no query parameters; other APIs may do so."""
+    if request.query_params:
+        raise AuthHTTPError(422, "INVALID_REQUEST")
 
 
 async def read_login_request(request: Request) -> LoginRequest:
@@ -104,8 +112,7 @@ async def read_login_request(request: Request) -> LoginRequest:
         raise AuthHTTPError(429, error.code, headers={"Retry-After": str(error.retry_after_seconds)}) from None
     if oversized:
         raise AuthHTTPError(413, "REQUEST_TOO_LARGE")
-    if request.query_params:
-        raise AuthHTTPError(422, "INVALID_REQUEST")
+    reject_auth_query_parameters(request)
     try:
         return LoginRequest.model_validate(data)
     except ValidationError:
@@ -125,12 +132,12 @@ async def create_session(request: Request, response: Response):
     return session_response(issued.context)
 
 
-@router.get("/me", response_model=SessionResponse)
+@router.get("/me", response_model=SessionResponse, dependencies=[Depends(reject_auth_query_parameters)])
 def current_identity(context: SessionContext = Depends(require_authenticated_session)):
     return session_response(context)
 
 
-@router.delete("/session", status_code=204)
+@router.delete("/session", status_code=204, dependencies=[Depends(reject_auth_query_parameters)])
 def delete_session(request: Request, context: SessionContext = Depends(require_csrf_session)):
     request.app.state.auth_sessions.invalidate(request.cookies.get(SESSION_COOKIE))
     response = Response(status_code=204)
