@@ -1,12 +1,38 @@
 # Barbershop CRM — Conversation Context Archive
 # Curated recovery context, not a literal transcript of every chat message.
 
+## Current Verified Checkpoint — 2026-10-20
+
+Project path: /Users/aminadavyamin/Documents/Projects/barbershop_crm
+Branch: feature/stage-29-alternative-discovery
+Verified implementation HEAD: 6091baf8caea0aa005bba4e7271b285368da162d
+main: 5846451000e8dc2ef75cb9605c63613295ef353e
+GitHub: https://github.com/gnhbsc30-source/barbershop_crm
+Full regression: 167 passed, 0 failed.
+The feature branch is 9 commits ahead of main, 0 behind at this checkpoint.
+
+Stage 29 Alternative Discovery and Selection Execution is implemented and reviewed
+on the feature branch. Stage 29 has NOT yet merged into main.
+Final Audit verdict: READY WITH NON-BLOCKING NOTES for the development/MVP scope;
+this is not a production-readiness claim.
+The audit checkpoint had 163 passing tests at ef8fdd4ebf50735c43a4e91e202c1072e9fb3d60.
+The reviewed deterministic aware-datetime rejection fix raised the suite to 167.
+
+The working tree was clean at the implementation checkpoint. The three context
+documents are now being updated for review, without an automatic commit.
+The HEAD above identifies the verified implementation, not a future docs commit.
+Next: documentation review/approval, approved documentation commit/push, PR into
+main when authorized, approved merge, and post-merge regression/state verification.
+No later feature milestone is selected. This document does not authorize a PR or merge.
+
 ## Project Identity
 
 Project: GB Barbershop CRM & AI / Barbershop CRM
 Type: SaaS for barbershops
-Primary development stack: Python + FastAPI + SQLite + vanilla HTML/CSS/JS
-AI direction: Gemini/NLU + ChromaDB/RAG, with strict deterministic backend control
+Implemented stack: Python + FastAPI startup/health endpoint + SQLite domain services.
+Planned frontend: vanilla HTML/CSS/JS (not implemented in the tracked project).
+AI direction: Gemini/NLU + ChromaDB/RAG, with strict deterministic backend control;
+this is product direction, not implemented Stage 29 AI/Chat integration.
 
 ## User's Working Expectations
 
@@ -21,7 +47,7 @@ AI direction: Gemini/NLU + ChromaDB/RAG, with strict deterministic backend contr
 - Do not jump ahead after a milestone; stop and let the user choose.
 - If information is missing or current state is uncertain, inspect/search rather than guess.
 - The user wants to control project mutations. Do not silently edit their project.
-- Current workflow is directly: assistant explains/decides/gives code → user inserts code → user runs tests → user returns results → assistant reviews → continue.
+- Original learning workflow was code guidance -> user edits/tests -> review. Current approved workflow also permits the assistant to implement narrowly authorized slices and run tests, then stop for review before committing. Commit/push and PR/merge remain separate explicit approvals.
 - Do not introduce Gemini/Codex as an intermediary workflow tool.
 
 ## Product Vision
@@ -35,6 +61,9 @@ Each barbershop is a tenant/business. Tenant isolation is mandatory.
 Owner/Manager has broad control. Staff/barbers have scoped access.
 
 ## Core Product Requirements
+
+This section preserves product direction, not a claim that every capability is
+implemented. The checkpoint above and PROJECT_STATE.md describe current implementation.
 
 Onboarding should configure:
 - business information
@@ -157,7 +186,7 @@ The old ZIP is a reference/backup and should not be mutated casually.
 
 ## Clean Architecture Direction
 
-Target simple structure:
+Planned simple structure (not all folders exist):
 
 app/
 - main.py
@@ -174,6 +203,12 @@ scripts/
 docs/
 
 Current clean project has also added `exceptions/` because concrete domain exceptions justified it.
+
+Physically present folders containing tracked files are app/core/, app/db/,
+app/exceptions/, app/services/, docs/, and tests/, plus tracked app/main.py and
+app/__init__.py. app/api/, app/ai/, frontend/admin/, frontend/customer/, knowledge/,
+and scripts/ are planned, currently absent and not tracked. A planned folder is
+not evidence of a completed feature.
 
 ## Database Foundation
 
@@ -351,7 +386,7 @@ Appointment Item:
 - duration_minutes
 - price
 
-The Appointment Service must eventually:
+Original Appointment Service responsibilities (implemented through Stages 27/28):
 - validate customer
 - validate staff
 - validate services
@@ -430,12 +465,83 @@ Coverage includes:
 - real free-window start after an existing appointment
 - no fixed hard time grid
 
-Latest verification:
+Historical verification at the Availability milestone (not the current total):
 - Availability Engine tests: **23 passed**
 - Full regression suite: **67 passed, 0 failed**
 - No regression detected.
 
 The Availability Engine milestone is considered complete.
+
+## Stages 27 and 28 — Completed Historical Milestones
+
+Stage 27 AppointmentService was implemented and reviewed with 75 passing tests
+at 7bc845c1c44d4d5ef9bd10b6ebd355a84e87a735. It resolves tenant-scoped customer,
+staff, and service truth; derives duration/price/end time; performs initial and
+transactional final availability checks; and creates appointment/item snapshots
+atomically. Repositories do not commit or rollback; SQLite commands remain in
+the DB transaction layer. ANY + CHOICE cannot book; ANY + AUTO needs explicit delegation.
+
+Stage 28 Booking Window + Minimum Booking Notice was reviewed, merged into main
+at 9c52973266e2d681be1d97201caf016e42de4c8b, and verified with 85 passing tests.
+Calendar-month addition clamps month ends; allowed boundaries are inclusive.
+Error order is PAST_DATETIME, MINIMUM_BOOKING_NOTICE_VIOLATION, then
+BOOKING_WINDOW_EXCEEDED. The subsequent Stage 28 documentation checkpoint is
+main at 5846451000e8dc2ef75cb9605c63613295ef353e.
+
+## Stage 29 — Implemented and Reviewed on the Feature Branch
+
+Discovery and eligibility:
+- AlternativeDiscoveryService is separate from AppointmentService. SPECIFIC requests only; requested_staff_id=None fails explicitly. Existing Availability ANY behavior does not imply ANY Alternative Discovery support.
+- Requested staff must exist within the business and be active, but may be incompatible with requested services. In that case skip same-staff candidates and search other staff eligible for ALL requested services using existing AvailabilityEngine compatibility logic.
+- Invalid/inactive services fail. No eligible staff returns an empty result, not the requested staff's SERVICE_NOT_SUPPORTED.
+- Existing tenant-scoped repositories, free-window builders, and AppointmentService.resolve_staff_services() supply scheduling and per-staff service truth. No schedule or compatibility rules are duplicated.
+
+Policies, candidates, and ranking:
+- Original datetime input with tzinfo is rejected with AppointmentBookingError("INVALID_DATETIME"), matching AppointmentService. No timezone conversion or DST support is implemented.
+- Original request must pass past, minimum-notice, and calendar-month booking-window checks in that order, using inclusive allowed boundaries.
+- Search the requested calendar date and later dates through the earlier of requested date + alternative_search_window_days and booking-window end. Candidate starts also respect the exact maximum datetime and minimum-notice boundary.
+- Earlier clock times on the same requested date may be returned if still legally bookable; earlier dates may not.
+- Generate the actual legal free-window start and later interval-aligned starts only when the entire staff-specific service duration fits. Do not force scheduling onto a fixed grid or generate every minute.
+- Settings defaults/fallbacks: booking_window_months=3, minimum_booking_notice_minutes=0, alternative_search_window_days=7, booking_interval_minutes=30. Existing businesses may have no settings row. No settings-write API was added.
+- Four groups: 1 SAME_STAFF_SAME_DAY; 2 OTHER_STAFF_SAME_DAY; 3 SAME_STAFF_OTHER_DAY; 4 OTHER_STAFF_OTHER_DAY.
+- Sort by priority, calendar-day distance, clock-minute distance, preferred interval alignment, staff ID, start datetime. Price/duration are not ranking criteria.
+- Deduplicate by (staff_id, start_datetime); conflicting business truth raises CONFLICTING_ALTERNATIVE_DUPLICATE rather than choosing silently.
+- Assign option_001 etc. only after deduplication/ranking. Full result list, total_available=len(alternatives), has_more=False. Domain results use structured codes; future presentation/Chat owns conversational messages.
+
+Trusted context and discovery integration:
+- AlternativeSearchResult remains discovery-only data. AlternativeDiscoveryResponse adds search_id; empty alternatives -> search_id=None and no context creation.
+- AlternativeSelectionContextStore is a small injected Protocol; InMemoryAlternativeSelectionContextStore is the MVP implementation, not hardcoded into Discovery.
+- Context stores search_id, business_id, requested_service_ids, created_at, expires_at, and minimal options: option_id, staff_id, start_datetime. It stores no trusted price, duration, end time, staff name, display strings, or ranking metadata.
+- Opaque UUID search IDs; option IDs are temporary and scoped to one search, not appointment IDs. Frozen data/tuples prevent ordinary caller list mutation from changing stored context.
+- TTL is 15 minutes by injectable server time. Before expires_at is valid; at/after it is expired. A claim does not extend TTL. Context errors remain ALTERNATIVE_SEARCH_EXPIRED / ALTERNATIVE_OPTION_NOT_FOUND.
+- Discovery performs no business-data writes, transactions, or booking. Its allowed side effect is ephemeral context creation. Nothing reserves or holds availability.
+
+Selection execution and concurrency:
+- AlternativeSelectionService receives the store and AppointmentService. Caller supplies search_id, option_id, trusted customer_id, and optional notes only.
+- claim_selection() atomically resolves and claims one search under RLock. A concurrent claim for another option on that same search raises ALTERNATIVE_SELECTION_IN_PROGRESS before book() is reached. Other searches are independent within the shared store instance.
+- Pass trusted business/staff/service IDs and start datetime to AppointmentService.book() with SPECIFIC staff. Never enable ANY/AUTO, silently select another option, or trust discovery price/duration.
+- AppointmentService freshly recalculates price/duration/end time, validates customer/staff/services/policy, checks availability, and rechecks inside its existing short transaction. It returns the real AppointmentBookingResult.
+- Success expires the whole context and removes its claim. Any booking failure releases the claim while retaining an otherwise valid context; a later option requires explicit selection and fresh validation.
+- APPOINTMENT_UNAVAILABLE, PAST_DATETIME, MINIMUM_BOOKING_NOTICE_VIOLATION, BOOKING_WINDOW_EXCEEDED, STAFF_NOT_FOUND, STAFF_INACTIVE, SERVICE_NOT_FOUND, and SERVICE_NOT_SUPPORTED map to SELECTED_ALTERNATIVE_NO_LONGER_AVAILABLE.
+- CUSTOMER_NOT_FOUND and unmapped booking errors retain their original meaning. Store and concurrency errors are not remapped to stale availability. Errors before a successful claim do not release another request's claim.
+
+## Stage 29 Audit and Production-Deferred Notes
+
+The reviewed Final Audit found no blockers within the approved development/MVP
+scope: READY WITH NON-BLOCKING NOTES. The aware-datetime TypeError noted in the
+audit was addressed by the reviewed fix at 6091baf8caea0aa005bba4e7271b285368da162d;
+current regression is 167 passed. This does not certify production readiness.
+
+Still deferred:
+- In-memory contexts/claims are single-process and require a shared store instance. Multi-worker deployment needs shared atomic storage. No Redis or durable context storage exists.
+- No persistent migration infrastructure or production DB migration; SQLite schema edits do not upgrade old databases automatically.
+- No restart durability, cross-resource booking/context atomicity, or general idempotency framework. TTL blocks future claims/resolutions but does not cancel an in-flight booking.
+- Business-local timezone/DST hardening and consistent scheduling clocks.
+- Settings integer-type hardening: SQLite INTEGER affinity and >0 checks can accept fractional/text values.
+- Lazy expired-context memory cleanup; no production search resource limits or pagination/query optimization.
+- Authentication/authorization remains an application-boundary responsibility. Opaque IDs alone do not establish user authorization.
+- ANY Alternative Discovery, API/UI/Chat integration, cancellation, and rescheduling.
+- Additional permanent regression scenarios for unexpected booking failures, simultaneous independent searches, TTL during active booking, precise candidate policy boundaries, and changed configuration between discovery/selection.
 
 ## Important Technical Definitions
 
@@ -462,23 +568,17 @@ one isolated business/customer organization inside the SaaS.
 
 ## Current Next Step
 
-**Appointment Service — Contract Design**
+The old "Appointment Service — Contract Design" next step is superseded by the
+completed Stage 27/28 implementation and Stage 29 work described above.
 
-Expected process:
-1. inspect current Appointment Repository, Scheduling Repository, Availability Engine, and product requirements
-2. define Appointment Service responsibility
-3. define input/output contract
-4. define duration/price resolution
-5. define booking-window enforcement
-6. define how Appointment Service calls Availability Engine
-7. define transaction and final concurrency protection
-8. define service-level errors
-9. design focused tests
-10. review/approve contract
-11. implement
-12. run full regression
-13. update checkpoints if milestone is complete
-14. stop
+1. Review the three updated context documents for architecture approval.
+2. Commit/push documentation only after explicit approval.
+3. Open a Stage 29 PR from feature/stage-29-alternative-discovery into main when authorized.
+4. Review the PR diff/checks and merge only after approval.
+5. Update local main, confirm Stage 29 is included and the working tree is clean, run full regression, and record the actual merge/post-merge checkpoint.
+6. Select the next feature milestone after review; none is authorized yet.
+
+This documentation task does not create a PR or merge Stage 29.
 
 ## Context Safety Rule
 

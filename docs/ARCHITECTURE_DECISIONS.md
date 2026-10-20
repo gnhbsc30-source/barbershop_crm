@@ -2,6 +2,14 @@
 
 This file records decisions that should survive conversation changes.
 
+Current checkpoint (2026-10-20): Stage 29 is implemented and reviewed on
+`feature/stage-29-alternative-discovery`, implementation HEAD
+`6091baf8caea0aa005bba4e7271b285368da162d`, full regression **167 passed**.
+Stage 29 has NOT yet merged into `main`; `main` remains at
+`5846451000e8dc2ef75cb9605c63613295ef353e`. Final Audit verdict:
+**READY WITH NON-BLOCKING NOTES** for development/MVP scope, not production readiness.
+Documentation review, PR, approved merge, and post-merge verification remain next.
+
 ## ADR-001 — Database Is the Source of Truth
 
 **Decision:** Database state and deterministic Python business logic are authoritative.
@@ -115,7 +123,8 @@ The current result can represent:
 - staff selection/result
 - rejection reason
 
-Future extensions may add ranked alternatives and richer slot-search results, but those are not considered part of the completed current engine unless explicitly implemented.
+Stage 29 adds ranked alternatives through a separate AlternativeDiscoveryService.
+These are not responsibilities added to the Availability Engine itself; see ADR-027 onward.
 
 ---
 
@@ -295,7 +304,7 @@ Current repository contract:
 - settings isolation
 - empty-result behavior
 
-**Latest verification:**
+**Historical verification (completed Availability milestone):**
 - Scheduling Repository tests: **23 passed**
 - Full regression at the completed Availability milestone: **67 passed, 0 failed**
 
@@ -374,9 +383,123 @@ Current behavior:
 - real free-window behavior
 - absence of a hard fixed time grid
 
-**Latest verification:**
+**Historical verification (completed Availability milestone):**
 - Availability Engine: **23 tests passed**
 - Full regression: **67 tests passed, 0 failed**
+
+---
+
+## ADR-027 — Discovery Is Separate From Booking
+
+**Decision:** AlternativeDiscoveryService in `app/services/alternatives.py` orchestrates proposals; AppointmentService remains the booking authority.
+
+- Discovery is SPECIFIC-staff only. `requested_staff_id=None` fails explicitly; ANY discovery has no approved ranking semantics yet.
+- Requested staff identity, tenant, and active status are validated independently of compatibility. A valid but incompatible requested staff member is skipped while other eligible staff are searched; they rank relative to the original requested staff ID.
+- All requested services must exist and be active in the tenant. Existing AvailabilityEngine compatibility logic determines staff eligible for all services; no eligible staff means an empty discovery result.
+- Public eligibility/free-window wrappers delegate to the existing deterministic Availability Engine logic. No schedule, break, block, or overlap rules are duplicated.
+- Per-staff service resolution reuses AppointmentService.resolve_staff_services(); repositories remain persistence-only and do not commit/rollback.
+- Discovery writes no business data. Its permitted side effect is creating a temporary selection context through an injected store Protocol.
+
+**Why:** Proposal search and actual appointment creation have distinct responsibilities, while sharing deterministic scheduling truth.
+
+---
+
+## ADR-028 — Legal Discovery Range and Deterministic Candidates
+
+**Decision:** Validate the original request before searching; search legal real free windows on the requested date and later dates only.
+
+- AppointmentService and Discovery reject datetime input with `tzinfo is not None` using `AppointmentBookingError("INVALID_DATETIME")`. This does not implement timezone conversion or DST.
+- Policy order: `requested_start < now` -> PAST_DATETIME; `< now + minimum notice` -> MINIMUM_BOOKING_NOTICE_VIOLATION; `> add_calendar_months(now, booking_window_months)` -> BOOKING_WINDOW_EXCEEDED.
+- Exact allowed boundaries are inclusive. Month-end clamping reuses AppointmentService.add_calendar_months().
+- The last search date is the earlier of requested date + alternative_search_window_days and booking-window end date. Candidate starts also obey the exact booking-window datetime.
+- The requested day may contain earlier clock-time candidates if they remain at/after the minimum-notice boundary. Earlier calendar dates are never searched.
+- Each free window is clipped to the minimum-notice boundary. Include its actual legal start when the full service fits; then generate later starts aligned from midnight to the preferred interval. Exact end fits are allowed; overruns are excluded. No per-minute enumeration or fixed candidate-count cap is imposed.
+- Settings remain in business_settings/get_business_settings(). Defaults and missing-row fallbacks are 3 booking months, 0 minimum-notice minutes, 7 alternative-search days, and 30 interval minutes. Businesses may still lack a settings row; no settings-write flow was added.
+- Booking interval is preferred candidate alignment and a ranking tie-breaker, never an availability legality constraint (ADR-010/024).
+
+---
+
+## ADR-029 — Priority, Ranking, and Deduplication
+
+**Decision:** Pure helpers in `app/services/appointments.py` implement the approved SPECIFIC ranking contract without database or clock dependencies.
+
+Priority groups and AlternativeReasonCode values:
+1. SAME_STAFF_SAME_DAY
+2. OTHER_STAFF_SAME_DAY
+3. SAME_STAFF_OTHER_DAY
+4. OTHER_STAFF_OTHER_DAY
+
+Ranking key: priority group, absolute calendar-day distance, absolute clock-minute distance, preferred interval alignment, staff ID, start datetime. Date distance is separate from clock-time distance. Price, duration, names, and option IDs do not determine ranking.
+
+Duplicate identity is exactly `(staff_id, start_datetime)`. Identical duplicates retain first occurrence; conflicting staff/name/start/end/items/duration/price business truth raises `CONFLICTING_ALTERNATIVE_DUPLICATE`. Other staff at the same time are preserved.
+
+After final ranking/deduplication, discovery assigns request-scoped IDs (`option_001`, etc.). AlternativeSearchResult contains discovery data and the full list (`total_available=len(alternatives)`, `has_more=False`). AlternativeDiscoveryResponse adds `search_id` without changing that result model. Empty discovery returns `search_id=None` and creates no context.
+
+---
+
+## ADR-030 — Minimal Trusted Selection Context and TTL
+
+**Decision:** Use an injected AlternativeSelectionContextStore Protocol; the initial InMemoryAlternativeSelectionContextStore is development/MVP infrastructure.
+
+- A context retains search_id, business_id, requested_service_ids, created_at, expires_at, and options.
+- Each stored option contains only option_id, staff_id, and start_datetime. Discovery price, duration, end time, staff name, display strings, and ranking metadata are not trusted booking data.
+- Context creation occurs only after final option IDs are assigned. A UUID provides an opaque search ID; business flow does not parse or depend on its format.
+- Option IDs are scoped to their search ID, are not appointment IDs, and do not reserve a slot.
+- TTL is 15 minutes from the injectable server clock: before expires_at is valid; at/after expires_at is expired. Claims do not extend TTL.
+- Frozen dataclasses, copied option records, and tuple collections protect stored snapshots from ordinary input-list mutation.
+- Unknown/missing/expired contexts raise ALTERNATIVE_SEARCH_EXPIRED. A missing option within a valid context raises ALTERNATIVE_OPTION_NOT_FOUND. There is no fallback selection.
+
+---
+
+## ADR-031 — Selection Executes Through AppointmentService
+
+**Decision:** AlternativeSelectionService in `app/services/alternative_selection_execution.py` receives the context store and AppointmentService through dependency injection.
+
+- Inputs are search_id, option_id, trusted customer_id, and optional notes. Customer identity is external trusted application context and is not stored during discovery.
+- Trusted business ID, staff ID, service IDs, and start datetime come only from the claimed server context. The service calls AppointmentService.book() with SPECIFIC staff and does not authorize ANY/AUTO assignment.
+- AppointmentService freshly validates customer/staff/services, calculates duration/price/end datetime, enforces booking policy, checks availability, and rechecks within its existing DB-layer transaction before atomic appointment/item creation. Discovery display data is never used as final price or duration.
+- Return AppointmentBookingResult directly. No API/Chat response abstraction is introduced for execution.
+- APPOINTMENT_UNAVAILABLE, PAST_DATETIME, MINIMUM_BOOKING_NOTICE_VIOLATION, BOOKING_WINDOW_EXCEEDED, STAFF_NOT_FOUND, STAFF_INACTIVE, SERVICE_NOT_FOUND, and SERVICE_NOT_SUPPORTED map to AlternativeSelectionError("SELECTED_ALTERNATIVE_NO_LONGER_AVAILABLE").
+- CUSTOMER_NOT_FOUND and other unmapped booking errors retain their original meaning. Store/concurrency errors remain distinct and are not mapped to stale availability.
+- Do not silently retry with another option or choose another staff member after failure. The caller must explicitly choose a further option.
+
+---
+
+## ADR-032 — Atomic Per-Search Claim and Lifecycle
+
+**Decision:** Selection Execution calls claim_selection() before booking. In-memory context state and a set of claimed search IDs are protected by threading.RLock.
+
+- Existence/TTL, option lookup, claim check, and claim insertion are atomic under the store lock. A second valid-option claim on the same search raises ALTERNATIVE_SELECTION_IN_PROGRESS, even for a different slot/staff member.
+- The lock is released before AppointmentService.book(); unrelated searches can proceed independently. The claim remains until completion or expiry.
+- Booking success expires the entire context and removes its claim. Booking failure, including unexpected exceptions, releases the claim and preserves an otherwise unexpired context. Exceptions are propagated or mapped explicitly, not swallowed.
+- Errors before claim acquisition do not release another request's claim. resolve_selection() remains a read/resolve operation and does not authorize a second execution.
+- At/after expires_at, future resolve/claim operations fail and remove context/claim state. Expiry does not cancel an already running booking.
+- Per-search claim protection complements AppointmentService's final slot-conflict protection; it is not a general idempotency framework or a reservation.
+
+---
+
+## ADR-033 — Presentation Owns Conversational Messages
+
+**Decision:** Domain services return structured discovery data, reason codes, deterministic errors, and booking results. Future presentation/Chat layers format user-facing explanations and confirmation prompts.
+
+No Stage 29 API routes, UI, Chat, or AI selection execution integration exists. LLM/client input cannot override trusted selection values or deterministic booking rules. Authentication/authorization remains an application-boundary responsibility; UUID/search-ID possession is not a complete authorization design.
+
+---
+
+## ADR-034 — Stage 29 Production-Deferred Limitations
+
+**Decision:** Accept the reviewed implementation for development/MVP with explicit limitations; do not claim production readiness.
+
+- In-memory contexts and RLock claims work only within one process and shared store instance. Multi-worker deployment requires shared atomic storage; no Redis, durable context storage, or distributed claim infrastructure exists.
+- No restart durability or atomic commit spans appointment booking and context consumption. Exactly-once execution across crashes is not guaranteed. No reservation/hold exists.
+- SQLite is temporary. No production database migration or persistent migration infrastructure exists; canonical-schema edits do not upgrade old databases automatically.
+- Business-local timezone/DST hardening and consistent scheduling clocks remain future work. Aware-input rejection is the current deterministic boundary only.
+- Positive-value checks and SQLite INTEGER affinity do not fully enforce integer settings; fractional/text rejection needs hardening. No settings-write API exists yet.
+- Expired-context cleanup is lazy; unaccessed expired contexts may retain memory. Discovery remains unpaginated without production capacity controls/query optimization.
+- ANY Alternative Discovery, authentication/authorization integration, API/UI/Chat integration, cancellation, and rescheduling remain deferred.
+- Audit follow-ups also include regression coverage for unexpected booking failure cleanup, concurrent independent searches, TTL during active booking, exact candidate datetime boundaries, and changed configuration between discovery and selection. These were non-blocking notes, not completed features/tests.
+
+**Verification:** Final Audit at `ef8fdd4ebf50735c43a4e91e202c1072e9fb3d60`: 163 passed, READY WITH NON-BLOCKING NOTES. Reviewed aware-input fix at `6091baf8caea0aa005bba4e7271b285368da162d`: 167 passed. Stage 29 remains on the feature branch, not merged into main.
 
 ---
 
