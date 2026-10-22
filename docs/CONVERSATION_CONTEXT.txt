@@ -1,25 +1,32 @@
 # Barbershop CRM — Conversation Context Archive
 # Curated recovery context, not a literal transcript of every chat message.
 
-## Current Verified Feature Checkpoint — 2026-10-20
+## Current Verified Post-Merge Checkpoint — 2026-10-22
 
 Project path: /Users/aminadavyamin/Documents/Projects/barbershop_crm
-Branch: feature/stage-30b1-auth-foundation
-Reviewed implementation/remediation HEAD: 24edf454379d142d9816131a83783b4c4e93ff32
-Local and remote main: 2936be4013aa2b5c6440442ce49afec8eb3effcb (unchanged base)
+Branch: main
+Verified regular Merge Commit: f714c1aea9353b7aca9bbbc052f1df429115b504
+PR #3: https://github.com/gnhbsc30-source/barbershop_crm/pull/3 (merged 2026-10-20)
+Local and remote main: f714c1aea9353b7aca9bbbc052f1df429115b504 (synchronized before this documentation commit)
+Historical implementation/remediation HEAD: 24edf454379d142d9816131a83783b4c4e93ff32
+Historical documentation/PR head: 97dc75a1db73838576e46969371a4896e57697e8
+Historical pre-merge main: 2936be4013aa2b5c6440442ce49afec8eb3effcb
 GitHub: https://github.com/gnhbsc30-source/barbershop_crm
-Full regression: 405 passed, 0 failed; remediation focused HTTP/launcher: 92 passed.
-The feature was five expected commits ahead / zero behind main, synchronized and
-clean before this documentation update. These are implementation checkpoint SHAs;
-consult Git history for the later documentation checkpoint/PR HEAD.
+Post-merge full regression on 2026-10-22: 405 passed, 0 failed.
+Historical remediation focused HTTP/launcher: 92 passed.
+All six Stage 30B.1 feature commits are ancestors of main; the two-parent merge
+tree matches the reviewed feature HEAD exactly. The working tree was clean at
+verification. Only the three context documents change in this checkpoint; consult
+Git history for its subsequent documentation-only commit SHA. Source branch
+feature/stage-30b1-auth-foundation is retained; no branches are created/deleted.
 
 Stage 30B.1 Local Authentication & Development Foundation is implemented, reviewed
-and verified on the feature branch ONLY, not merged into main. Final security audit
+and verified on main after PR #3 merged with a regular merge commit. Final security audit
 found a trailing-slash redirect blocker plus approved query/header corrections.
 All three are fixed with 15 new regression cases, raising 390 tests to 405.
-Implementation/remediation is approved for documentation and the PR gate, not merge
-or production deployment. The authorized workflow is checkpoint docs -> feature PR
-review -> separately approved merge -> post-merge verification. No auto-merge.
+Feature documentation/PR review, merge and post-merge implementation verification
+are complete, not pending. This task records the authorized post-merge checkpoint
+on main and then stops for architectural review. It does not imply production readiness.
 Stage 30B.2 is not started and requires its own approved implementation contract.
 
 Historical Stage 29 checkpoint:
@@ -36,7 +43,7 @@ Historical implementation HEAD: 6091baf8caea0aa005bba4e7271b285368da162d.
 Reviewed documentation/PR head: 47bdcea7f9fcf90832264ed652d35bb88d682a5f.
 Pre-merge main: 5846451000e8dc2ef75cb9605c63613295ef353e.
 Stage 29's final documentation commit is 2936be4013aa2b5c6440442ce49afec8eb3effcb,
-the current main base. Its review/merge/checkpoint workflow is complete, not pending.
+the historical Stage 30B.1 base. Its review/merge/checkpoint workflow is complete, not pending.
 
 ## Project Identity
 
@@ -571,18 +578,26 @@ Still deferred:
 - Business-local timezone/DST hardening and consistent scheduling clocks.
 - Settings integer-type hardening: SQLite INTEGER affinity and >0 checks can accept fractional/text values.
 - Lazy expired-context memory cleanup; no production search resource limits or pagination/query optimization.
-- Authentication/authorization remains an application-boundary responsibility. Stage 30B.1 adds development auth on its feature branch; search-context ownership/business-resource authorization integration remains unimplemented. Opaque IDs alone do not establish user authorization.
+- Authentication/authorization remains an application-boundary responsibility. Stage 30B.1 adds development auth on main; search-context ownership/business-resource authorization integration remains unimplemented. Opaque IDs alone do not establish user authorization.
 - ANY Alternative Discovery, booking/calendar HTTP APIs, UI/Chat integration, cancellation and rescheduling. The three Stage 30B.1 development auth endpoints are separate, implemented feature work.
 - Additional permanent regression scenarios for unexpected booking failures, simultaneous independent searches, TTL during active booking, precise candidate policy boundaries, and changed configuration between discovery/selection.
 
-## Stage 30B.1 — Authentication and Development Foundation (Pending Merge)
+## Stage 30B.1 — Authentication and Development Foundation (Merged and Verified)
 
-Five reviewed commits, oldest first:
+Six preserved feature commits, oldest first:
 1. 75f3c9d371b2f7cd9c29757212dcfde6f04b45d3 — identity and credential foundation.
 2. 507fe74a28ce356c38ca29a8ea985a526267d092 — sessions and rate limiting.
 3. d878fbf031f6c994fc30096bd3a19ca7c1037dce — safe provisioning and manual rotation.
 4. f5c18ea3e7866eb77702279999cec9eb44ed4e6c — local HTTP auth; audit baseline 390 passed.
 5. 24edf454379d142d9816131a83783b4c4e93ff32 — auth routing/query/header remediation; 405 passed.
+6. 97dc75a1db73838576e46969371a4896e57697e8 — reviewed context-document checkpoint and PR #3 head.
+
+PR #3 merged using f714c1aea9353b7aca9bbbc052f1df429115b504, with first parent
+2936be4013aa2b5c6440442ce49afec8eb3effcb and second parent
+97dc75a1db73838576e46969371a4896e57697e8. On 2026-10-22 main was safely
+fast-forwarded and verified: all six ancestors preserved, unchanged reviewed tree,
+405 tests passed. No tracked runtime DB, provisioning manifest or credential files;
+tracked-source secret-pattern checks found no obvious credential literals.
 
 Identity and responsibilities:
 - authentication.py owns immutable Principal, namespaced subjects, strict random access-code parsing/generation, Argon2id verification and fingerprints. It does not store sessions/rate-limit counters or implement HTTP.
@@ -646,10 +661,10 @@ one isolated business/customer organization inside the SaaS.
 ## Current Next Step
 
 The old Appointment Service design and Stage 29 post-merge checkpoint instructions
-are historical and complete; Stage 30B.1 now waits at the documentation/PR gate.
+are historical and complete. Stage 30B.1 is now merged and post-merge verified.
 
-1. Complete the authorized three-document checkpoint commit/push and Stage 30B.1 feature PR for architecture review. Do not merge or enable auto-merge.
-2. Await explicit merge approval; after an approved merge, synchronize main, rerun regression and record a post-merge checkpoint. Retain the feature branch unless separately authorized otherwise.
+1. Complete the authorized three-document post-merge checkpoint commit/push to main, then stop for architectural review.
+2. The Stage 30B.1 PR/merge/verification workflow is complete; no pending merge approval or PR creation remains. Retain the feature branch; create/delete no branches and start no new feature work.
 3. Intended Stage 30B.2 direction is authenticated booking/discovery/selection HTTP boundaries reusing existing domain services, including trusted customer/tenant and search-context ownership. Exact endpoint/slice contracts still require review and approval. No implementation starts automatically.
 
 Future customer/owner interfaces must use the same real backend and development DB.

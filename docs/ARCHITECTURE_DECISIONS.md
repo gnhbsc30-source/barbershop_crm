@@ -2,13 +2,17 @@
 
 This file records decisions that should survive conversation changes.
 
-Current feature checkpoint (2026-10-20): Stage 30B.1 is implemented/reviewed on
-`feature/stage-30b1-auth-foundation`, not merged. Implementation/remediation HEAD:
-`24edf454379d142d9816131a83783b4c4e93ff32`; full regression **405 passed, 0 failed**;
-focused HTTP/launcher verification **92 passed**. The final audit's redirect blocker
-and approved query/header corrections are resolved; documentation/PR review is
-authorized, merge is not. This remains local development/MVP, not production ready.
-Base/local/remote `main` remains `2936be4013aa2b5c6440442ce49afec8eb3effcb`.
+Current post-merge checkpoint (2026-10-22): Stage 30B.1 is implemented, reviewed,
+merged into `main` through [PR #3](https://github.com/gnhbsc30-source/barbershop_crm/pull/3),
+and verified. Regular Merge Commit `f714c1aea9353b7aca9bbbc052f1df429115b504`
+preserves all six feature commits; post-merge full regression **405 passed, 0 failed**.
+Local/remote main were synchronized and clean before this documentation update.
+Historical implementation/remediation HEAD: `24edf454379d142d9816131a83783b4c4e93ff32`;
+reviewed documentation/PR head: `97dc75a1db73838576e46969371a4896e57697e8`;
+source branch `feature/stage-30b1-auth-foundation` is retained. Pre-merge main:
+`2936be4013aa2b5c6440442ce49afec8eb3effcb`. Historical focused HTTP/launcher
+verification: **92 passed**. The final audit's redirect blocker and approved
+query/header corrections remain resolved. This is development/MVP, not production ready.
 Stage 29 was merged via [PR #2](https://github.com/gnhbsc30-source/barbershop_crm/pull/2),
 regular Merge Commit `d6b4866461bab2ea13dd8a001b3101136110c26a`, verified with 167 tests.
 Its historical audit/implementation facts remain in ADR-027 through ADR-034.
@@ -501,7 +505,7 @@ No Stage 29 API routes, UI, Chat, or AI selection execution integration exists. 
 - Business-local timezone/DST hardening and consistent scheduling clocks remain future work. Aware-input rejection is the current deterministic boundary only.
 - Positive-value checks and SQLite INTEGER affinity do not fully enforce integer settings; fractional/text rejection needs hardening. No settings-write API exists yet.
 - Expired-context cleanup is lazy; unaccessed expired contexts may retain memory. Discovery remains unpaginated without production capacity controls/query optimization.
-- At the Stage 29 checkpoint, ANY Alternative Discovery, authentication/authorization integration, API/UI/Chat integration, cancellation, and rescheduling were deferred. Stage 30B.1 now supplies development auth only on its feature branch (ADR-035 onward); booking/search ownership integration, business APIs, UI/Chat and cancellation/rescheduling execution are still deferred.
+- At the Stage 29 checkpoint, ANY Alternative Discovery, authentication/authorization integration, API/UI/Chat integration, cancellation, and rescheduling were deferred. Stage 30B.1 now supplies development auth on `main` (ADR-035 onward); booking/search ownership integration, business APIs, UI/Chat and cancellation/rescheduling execution are still deferred.
 - Audit follow-ups also include regression coverage for unexpected booking failure cleanup, concurrent independent searches, TTL during active booking, exact candidate datetime boundaries, and changed configuration between discovery and selection. These were non-blocking notes, not completed features/tests.
 
 **Verification history:** Final Audit at `ef8fdd4ebf50735c43a4e91e202c1072e9fb3d60`: 163 passed, READY WITH NON-BLOCKING NOTES. Reviewed aware-input fix at `6091baf8caea0aa005bba4e7271b285368da162d`: 167 passed. Stage 29 was then merged into `main` through [PR #2](https://github.com/gnhbsc30-source/barbershop_crm/pull/2) using regular Merge Commit `d6b4866461bab2ea13dd8a001b3101136110c26a`; post-merge regression: **167 passed, 0 failed**. The later Stage 29 documentation checkpoint is `2936be4013aa2b5c6440442ce49afec8eb3effcb`. Its production limitations remain unless explicitly superseded below.
@@ -519,7 +523,7 @@ No Stage 29 API routes, UI, Chat, or AI selection execution integration exists. 
 - Argon2id generation uses 19 MiB, time cost 2, parallelism 1, 16-byte salt and 32-byte hash. Actual verification validates payloads; metadata inspection alone is not payload validation or work-factor hardening.
 - `app/services/authentication.py` owns these stateless identity/credential functions. It contains no HTTP, session lifecycle or rate-limit state.
 
-**Status:** Implemented on the Stage 30B.1 feature branch only; not production authentication/onboarding.
+**Status:** Implemented, reviewed, merged through PR #3 and verified on `main`; not production authentication/onboarding.
 
 ---
 
@@ -593,7 +597,7 @@ No Stage 29 API routes, UI, Chat, or AI selection execution integration exists. 
 
 **Status:** Scope decision only, not implemented by Stage 30B.1. Both future customer/owner interfaces must share the real backend/development DB. Cancellation cutoffs, rescheduling/status-transition policy, owner overrides and repricing remain undecided; this ADR does not approve those policies or infer a cancellation/rescheduling command implementation.
 
-**Next:** Stage 30B.2 is intended to address the authenticated business API boundary in separate reviewable slices; exact contracts need approval. Do not start it automatically or merge Stage 30B.1 without explicit approval.
+**Next:** Stage 30B.1 merge and post-merge verification are complete. Stage 30B.2 is intended to address the authenticated business API boundary in separate reviewable slices; exact contracts need approval. Do not start it automatically. This checkpoint changes no architectural decision or undecided business policy.
 
 ---
 
