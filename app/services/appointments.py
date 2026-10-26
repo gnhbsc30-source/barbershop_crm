@@ -466,6 +466,10 @@ class AppointmentService:
         if requested_start > latest_allowed_start:
             raise AppointmentBookingError("BOOKING_WINDOW_EXCEEDED")
 
+    def validate_booking_policy(self, *, business_id: int, requested_start: datetime) -> None:
+        """Expose the existing policy for application previews, without duplication."""
+        self._ensure_booking_policy(business_id=business_id, requested_start=requested_start)
+
     @staticmethod
     def add_calendar_months(value: datetime, months: int) -> datetime:
         """Add whole calendar months while clamping invalid month-end dates."""

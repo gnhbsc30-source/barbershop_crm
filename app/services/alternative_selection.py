@@ -75,6 +75,8 @@ class AlternativeSelectionContextStore(Protocol):
 
     def expire_search_context(self, search_id: str) -> None: ...
 
+    def get_search_context(self, search_id: str) -> AlternativeSearchContext: ...
+
 
 class InMemoryAlternativeSelectionContextStore:
     """MVP-only selection storage with no persistence across process restarts."""
@@ -123,6 +125,11 @@ class InMemoryAlternativeSelectionContextStore:
         with self._lock:
             context = self._get_valid_context(search_id)
             return self._resolve_context_option(context, option_id)
+
+    def get_search_context(self, search_id: str) -> AlternativeSearchContext:
+        """Read immutable metadata/minimal options, still enforcing authoritative TTL."""
+        with self._lock:
+            return self._get_valid_context(search_id)
 
     def claim_selection(
         self,
