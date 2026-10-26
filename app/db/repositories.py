@@ -2,6 +2,20 @@ from sqlite3 import Connection
 from typing import Any
 
 
+def list_active_services(connection: Connection, business_id: int) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """SELECT id, name, description, default_duration_minutes, default_price
+           FROM services WHERE business_id = ? AND is_active = 1 ORDER BY id""",
+        (business_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_booking_business(connection: Connection, business_id: int) -> dict[str, Any] | None:
+    row = connection.execute("SELECT id, timezone FROM businesses WHERE id = ? AND is_active = 1", (business_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def get_user_account_identity(
     connection: Connection,
     business_id: int,

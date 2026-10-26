@@ -411,7 +411,8 @@ def test_unexpected_error_is_redacted_without_raw_exception_logs(client, http_da
 
 
 def test_only_approved_routes_and_no_cors(client):
-    assert set(app.openapi()["paths"]) == {"/health", f"{AUTH}/dev-session", f"{AUTH}/me", f"{AUTH}/session"}
+    assert set(app.openapi()["paths"]) == {"/health", f"{AUTH}/dev-session", f"{AUTH}/me", f"{AUTH}/session",
+                                          "/api/v1/customer/services", "/api/v1/customer/staff"}
     response = client.options(f"{AUTH}/dev-session", headers={"Origin": "http://attacker.test", "Access-Control-Request-Method": "POST"})
     assert response.status_code == 403
     assert "access-control-allow-origin" not in response.headers
