@@ -42,16 +42,17 @@ class CustomerBooking:
             raise AppointmentBookingError("SERVICE_NOT_FOUND")
 
     def staff(self, service_ids):
-        self.validate_services(service_ids)
-        staff = AvailabilityEngine(self.connection).get_eligible_staff(self.business_id, service_ids)
-        return {"service_ids": service_ids, "staff": [
-            {"staff_id": row["id"], "staff_name": row["name"], **item_summary(
-                self.appointments.resolve_staff_services(business_id=self.business_id, staff_id=row["id"], service_ids=service_ids))}
-            for row in staff
-        ]}
+        with read_snapshot(self.connection):
+            self.validate_services(service_ids)
+            staff = AvailabilityEngine(self.connection).get_eligible_staff(self.business_id, service_ids)
+            return {"service_ids": service_ids, "staff": [
+                {"staff_id": row["id"], "staff_name": row["name"], **item_summary(
+                    self.appointments.resolve_staff_services(business_id=self.business_id, staff_id=row["id"], service_ids=service_ids))}
+                for row in staff
+            ]}
 
     def search(self, data, owner, contexts, ownership):
-        with ownership.computation(owner, data.include_alternatives) as ticket:
+        with ownership.computation(owner, data.include_alternatives) as ticket, read_snapshot(self.connection):
             self.validate_services(data.service_ids)
             start = datetime.fromisoformat(data.start_datetime)
             self.appointments.validate_booking_policy(business_id=self.business_id, requested_start=start)

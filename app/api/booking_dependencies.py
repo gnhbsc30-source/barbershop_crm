@@ -62,7 +62,7 @@ def search_owner(request, context):
     return SearchOwner(principal.subject, principal.business_id, principal.customer_id, binding)
 
 
-def execute_booking(request, context, operation, scheduling=False):
+def execute_booking(request, context, operation, scheduling=False, response_model=None):
     try:
         fresh = require_authenticated_session(request)
         require_customer(fresh)
@@ -74,7 +74,17 @@ def execute_booking(request, context, operation, scheduling=False):
                 business = get_booking_business(connection, fresh.principal.business_id)
                 if not business or not booking_clock.scheduling_clock_ready(business["timezone"]):
                     raise AuthHTTPError(503, "BOOKING_CLOCK_CONFIGURATION_INVALID")
-            return operation(CustomerBooking(connection, fresh.principal))
+            value = operation(CustomerBooking(connection, fresh.principal))
+            if response_model is not None:
+                try:
+                    value = response_model.model_validate(value).model_dump(mode="json")
+                except Exception:
+                    if isinstance(value, dict) and isinstance(value.get("alternatives"), dict):
+                        search_id = value["alternatives"].get("search_id")
+                        if search_id:
+                            request.app.state.booking_searches.discard_created(search_id)
+                    raise BookingConfigurationError() from None
+            return value
     except AuthHTTPError:
         raise
     except SessionError:
@@ -85,6 +95,8 @@ def execute_booking(request, context, operation, scheduling=False):
         raise AuthHTTPError(503, "BOOKING_CONFIGURATION_INVALID") from None
     except (AppointmentBookingError, AlternativeSelectionError) as error:
         code = error.code
+        if code == "CUSTOMER_NOT_FOUND":
+            raise AuthHTTPError(401, "UNAUTHENTICATED", clear_cookie=True) from None
         if code in ("STAFF_NOT_FOUND", "STAFF_INACTIVE", "SERVICE_NOT_FOUND", "ALTERNATIVE_OPTION_NOT_FOUND", "APPOINTMENT_NOT_FOUND"):
             status = 404
         elif code == "ALTERNATIVE_SEARCH_EXPIRED":
@@ -95,7 +107,8 @@ def execute_booking(request, context, operation, scheduling=False):
             status = 422
         raise AuthHTTPError(status, code) from None
     except sqlite3.OperationalError as error:
-        busy = getattr(error, "sqlite_errorcode", None) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+        error_code = getattr(error, "sqlite_errorcode", 0)
+        busy = error_code & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
         raise AuthHTTPError(503 if busy else 500, "BOOKING_SERVICE_UNAVAILABLE" if busy else "INTERNAL_ERROR",
                             headers={"Retry-After": "1"} if busy else None) from None
     except Exception:

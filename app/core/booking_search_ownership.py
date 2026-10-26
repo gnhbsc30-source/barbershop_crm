@@ -107,3 +107,9 @@ class BookingSearchOwnership:
             record = self._records.get(search_id)
             if record and record.owner == owner:
                 del self._records[search_id]
+
+    def discard_created(self, search_id: str):
+        """Cleanup a server-created search after transport validation failure."""
+        with self._lock:
+            self._records.pop(search_id, None)
+            self._store.expire_search_context(search_id)

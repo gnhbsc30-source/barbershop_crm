@@ -28,6 +28,10 @@ def booking_customer(client, http_data, monkeypatch):
 
     for module in (appointments, alternatives, availability):
         monkeypatch.setattr(module, "datetime", FrozenDatetime)
+    from app.core import booking_clock
+    # Clock readiness itself has real isolated-process tests. HTTP tests should
+    # not depend on the developer/CI machine's timezone.
+    monkeypatch.setattr(booking_clock, "scheduling_clock_ready", lambda zone: zone == "Asia/Jerusalem")
     app.state.auth_sessions = InMemorySessionStore(lambda: clock[0].replace(tzinfo=timezone.utc))
     app.state.booking_contexts = InMemoryAlternativeSelectionContextStore(lambda: clock[0].replace(tzinfo=timezone.utc))
     app.state.booking_searches = BookingSearchOwnership(app.state.booking_contexts, lambda: clock[0].replace(tzinfo=timezone.utc))
@@ -153,7 +157,8 @@ def test_search_security_and_clock(client, http_data, booking_customer, monkeypa
         response = login(client, http_data[2]["OWNER"])
         headers = {"Origin": DEVELOPMENT_ORIGIN, "X-CSRF-Token": response.json()["csrf_token"]}
     else:
-        monkeypatch.setenv("TZ", "UTC")
+        from app.core import booking_clock
+        monkeypatch.setattr(booking_clock, "scheduling_clock_ready", lambda zone: False)
         status = 503
     response = client.post(ROOT + "/booking-searches", json=search_body(), headers=headers)
     assert response.status_code == status
@@ -388,3 +393,396 @@ def test_history_uses_two_queries_and_one_consistent_snapshot(client, http_data,
     assert len(item_calls) == 1
     monkeypatch.setattr(repositories, "get_customer_appointment_rows", original)
     assert client.get(ROOT + "/appointments/1").json()["total_price"] == "90.00"
+
+
+def static_confirmation():
+    return {"items": [{"service_id": 1, "duration_minutes": 45, "price": "80.00"}],
+            "total_duration_minutes": 45, "total_price": "80.00", "currency": "ILS"}
+
+
+CUSTOMER_ROUTES = [
+    ("GET", "/services"), ("GET", "/staff?service_id=1"), ("GET", "/appointments"), ("GET", "/appointments/1"),
+    ("POST", "/booking-searches"), ("POST", "/appointments"), ("POST", "/booking-searches/unknown/selection"),
+]
+
+
+def route_body(path):
+    if path.endswith("/selection"):
+        return {"option_id": "option_001", "confirmation": static_confirmation()}
+    if path == "/appointments":
+        return {**search_body(), "confirmation": static_confirmation()}
+    return search_body()
+
+
+@pytest.mark.parametrize("method,path", CUSTOMER_ROUTES)
+def test_owner_is_rejected_by_every_customer_route(client, http_data, booking_customer, method, path):
+    response = login(client, http_data[2]["OWNER"])
+    headers = {"Origin": DEVELOPMENT_ORIGIN, "X-CSRF-Token": response.json()["csrf_token"]}
+    result = client.request(method, ROOT + path, headers=headers, **({"json": route_body(path)} if method == "POST" else {}))
+    assert result.status_code == 403
+    assert not app.state.booking_contexts._contexts
+
+
+@pytest.mark.parametrize("path", ["/booking-searches", "/appointments", "/booking-searches/unknown/selection"])
+@pytest.mark.parametrize("failure", ["missing", "wrong", "duplicate", "origin"])
+def test_every_customer_post_requires_origin_and_session_csrf(client, booking_customer, path, failure):
+    headers, _ = booking_customer
+    if failure == "missing":
+        headers = {"Origin": DEVELOPMENT_ORIGIN}
+    elif failure == "wrong":
+        headers = {**headers, "X-CSRF-Token": "wrong"}
+    elif failure == "duplicate":
+        headers = [("Origin", DEVELOPMENT_ORIGIN), ("X-CSRF-Token", headers["X-CSRF-Token"]), ("X-CSRF-Token", headers["X-CSRF-Token"])]
+    else:
+        headers = {"X-CSRF-Token": headers["X-CSRF-Token"]}
+    response = client.post(ROOT + path, json=route_body(path), headers=headers)
+    assert response.status_code == 403
+    assert not app.state.booking_contexts._contexts
+
+
+@pytest.mark.parametrize("change", [{"business_id": 2}, {"customer_id": 2}, {"end_datetime": "2027-01-04T10:45:00"},
+                                    {"staff_selection": {"type": "ANY", "mode": "AUTO"}}, {"confirmation": None},
+                                    {"confirmation": {**static_confirmation(), "currency": "USD"}}])
+def test_booking_rejects_identity_overrides_and_missing_confirmation(client, booking_customer, change):
+    headers, _ = booking_customer
+    response = client.post(ROOT + "/appointments", json={**search_body(), "confirmation": static_confirmation(), **change}, headers=headers)
+    assert response.status_code == 422
+
+
+def test_customer_body_bound_content_type_and_no_redirect(client, booking_customer):
+    headers, _ = booking_customer
+    response = client.post(ROOT + "/booking-searches", content="x" * 17000, headers={**headers, "Content-Type": "application/json"})
+    assert response.status_code == 413
+    assert client.post(ROOT + "/booking-searches", content="{}", headers=headers).status_code == 415
+    response = client.post(ROOT + "/appointments/?access_code=AUDIT_ONLY_VALUE", json={}, headers=headers, follow_redirects=False)
+    assert response.status_code == 404 and "location" not in response.headers
+    assert "AUDIT_ONLY_VALUE" not in response.text
+    wrong_method = client.delete(ROOT + "/appointments", headers=headers)
+    assert wrong_method.status_code == 405 and "POST" in wrong_method.headers["allow"]
+
+
+def test_http_totals_sum_item_cents_and_history_preserves_them(client, http_data, booking_customer):
+    headers, _ = booking_customer
+    execute(http_data[0], "UPDATE services SET default_price=CASE WHEN id=1 THEN 0.1 ELSE 0.2 END")
+    request = search_body(service_ids=[1, 2])
+    quote = preview(client, headers, request)["requested_availability"]["quote"]
+    assert quote["total_price"] == "0.30"
+    response = client.post(ROOT + "/appointments", json={**request, "confirmation": confirmation(quote)}, headers=headers)
+    assert response.status_code == 201 and response.json()["total_price"] == "0.30"
+    assert client.get(ROOT + "/appointments/1").json()["total_price"] == "0.30"
+
+
+@pytest.mark.parametrize("offset,status", [(timedelta(minutes=15) - timedelta(microseconds=1), 404),
+                                          (timedelta(minutes=15), 410), (timedelta(minutes=15, microseconds=1), 410)])
+def test_owned_search_exact_ttl_boundary(client, http_data, booking_customer, offset, status):
+    headers, clock = booking_customer
+    occupy(http_data)
+    found = preview(client, headers, search_body(include_alternatives=True))["alternatives"]
+    clock[0] += offset
+    response = client.post(ROOT + f"/booking-searches/{found['search_id']}/selection",
+        json={"option_id": "missing", "confirmation": static_confirmation()}, headers=headers)
+    assert response.status_code == status
+    assert counts(http_data[0]) == (1, 1)
+
+
+def test_logout_makes_owned_search_unusable(client, http_data, booking_customer):
+    headers, _ = booking_customer
+    occupy(http_data)
+    found = preview(client, headers, search_body(include_alternatives=True))["alternatives"]
+    assert client.delete("/api/v1/auth/session", headers=headers).status_code == 204
+    assert client.post(ROOT + f"/booking-searches/{found['search_id']}/selection", json={"option_id": "option_001", "confirmation": static_confirmation()}, headers=headers).status_code == 401
+
+
+def test_search_response_validation_failure_cleans_context(client, http_data, booking_customer, monkeypatch):
+    from app.services.customer_booking import CustomerBooking
+    headers, _ = booking_customer
+    occupy(http_data)
+    original = CustomerBooking.search
+
+    def invalid(*args, **kwargs):
+        value = original(*args, **kwargs)
+        value["unexpected"] = True
+        return value
+
+    monkeypatch.setattr(CustomerBooking, "search", invalid)
+    response = client.post(ROOT + "/booking-searches", json=search_body(include_alternatives=True), headers=headers)
+    assert response.status_code == 503
+    assert not app.state.booking_contexts._contexts and not app.state.booking_searches._records
+    assert not app.state.booking_searches._pending
+
+
+def test_only_one_of_two_options_reaches_book_over_http(client, http_data, booking_customer, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    headers, _ = booking_customer
+    occupy(http_data)
+    found = preview(client, headers, search_body(include_alternatives=True))["alternatives"]
+    options = [found["options"][0], found["options"][-1]]
+    entered, release = Event(), Event()
+    calls = []
+    original = appointments.AppointmentService.book
+
+    def blocked(*args, **kwargs):
+        calls.append(True)
+        entered.set()
+        assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(appointments.AppointmentService, "book", blocked)
+    url = ROOT + f"/booking-searches/{found['search_id']}/selection"
+    def choose(option):
+        return client.post(url, json={"option_id": option["option_id"], "confirmation": confirmation(option)}, headers=headers)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(choose, options[0])
+        assert entered.wait(5)
+        try:
+            second = choose(options[1])
+            assert second.status_code == 409 and second.json()["error"]["code"] == "ALTERNATIVE_SELECTION_IN_PROGRESS"
+            assert len(calls) == 1
+        finally:
+            release.set()
+        assert first.result(5).status_code == 201
+    assert counts(http_data[0]) == (2, 2)
+
+
+@pytest.mark.parametrize("start,notice,months,status,code", [
+    ("2027-01-04T08:59:59", 60, 3, 422, "PAST_DATETIME"),
+    ("2027-01-04T09:59:59", 60, 3, 422, "MINIMUM_BOOKING_NOTICE_VIOLATION"),
+    ("2027-01-04T10:00:00", 60, 3, 200, None),
+    ("2027-02-04T09:00:00", 0, 1, 200, None),
+    ("2027-02-04T09:00:00.000001", 0, 1, 422, "BOOKING_WINDOW_EXCEEDED"),
+    ("2027-02-30T10:00:00", 0, 3, 422, "INVALID_DATETIME"),
+    ("2027-01-04T10:00:00Z", 0, 3, 422, "INVALID_DATETIME"),
+])
+def test_customer_policy_and_datetime_boundaries(client, http_data, booking_customer, start, notice, months, status, code):
+    headers, _ = booking_customer
+    execute(http_data[0], "UPDATE business_settings SET minimum_booking_notice_minutes=?,booking_window_months=?", (notice, months))
+    result = client.post(ROOT + "/booking-searches", json=search_body(start_datetime=start), headers=headers)
+    assert result.status_code == status, result.text
+    if code:
+        assert result.json()["error"]["code"] == code
+    assert counts(http_data[0]) == (0, 0)
+
+
+def test_openapi_describes_bounded_request_and_response_models():
+    schema = app.openapi()
+    for path in ("/booking-searches", "/appointments", "/booking-searches/{search_id}/selection"):
+        operation = schema["paths"][ROOT + path]["post"]
+        body = operation["requestBody"]["content"]["application/json"]["schema"]
+        assert body["additionalProperties"] is False
+        assert "confirmation" in body["required"] if path != "/booking-searches" else "service_ids" in body["required"]
+
+
+@pytest.mark.parametrize("tenant", [1, 2])
+def test_other_customer_or_tenant_cannot_select_search_or_read_appointments(client, http_data, booking_customer, monkeypatch, tenant):
+    from types import MappingProxyType
+    from starlette.testclient import TestClient
+    from app.services.authentication import IdentityReference, hash_access_secret
+    headers, _ = booking_customer
+    occupy(http_data)
+    found = preview(client, headers, search_body(include_alternatives=True))["alternatives"]
+    path = http_data[0]
+    if tenant == 2:
+        execute(path, "INSERT INTO businesses (id,business_name) VALUES (2,'Foreign')")
+        execute(path, "INSERT INTO services (id,business_id,name,default_duration_minutes,default_price) VALUES (99,2,'Foreign',20,10)")
+    execute(path, "INSERT INTO customers (id,business_id,name,customer_type) VALUES (20,?,'Other','REGISTERED')", (tenant,))
+    selector = "b" * 16
+    execute(path, "INSERT INTO customer_accounts (id,business_id,customer_id,username,password_hash) VALUES (2,?,20,?,?)",
+            (tenant, selector, hash_access_secret("s" * 43)))
+    app.state.auth_identities = MappingProxyType({**app.state.auth_identities, selector: IdentityReference("customer_account", tenant, 2)})
+    monkeypatch.setattr(app.state.booking_contexts, "claim_selection", lambda *a: pytest.fail("foreign owner reached claim"))
+    with_other = TestClient(app, base_url=DEVELOPMENT_ORIGIN, client=("127.0.0.1", 50001))
+    try:
+        result = login(with_other, selector + "." + "s" * 43)
+        assert result.status_code == 200
+        other_headers = {"Origin": DEVELOPMENT_ORIGIN, "X-CSRF-Token": result.json()["csrf_token"]}
+        option = found["options"][0]
+        response = with_other.post(ROOT + f"/booking-searches/{found['search_id']}/selection",
+            json={"option_id": option["option_id"], "confirmation": confirmation(option)}, headers=other_headers)
+        assert response.status_code == 410
+        assert with_other.get(ROOT + "/appointments/1").status_code == 404
+        assert with_other.get(ROOT + "/appointments").json()["appointments"] == []
+        if tenant == 2:
+            assert with_other.get(ROOT + "/staff?service_id=1").status_code == 404
+            assert [s["service_id"] for s in with_other.get(ROOT + "/services").json()["services"]] == [99]
+        assert counts(path) == (1, 1)
+    finally:
+        with_other.close()
+
+
+def test_confirmed_transaction_persists_fresh_snapshot_and_identical_interval(client, http_data, booking_customer, monkeypatch):
+    from contextlib import contextmanager
+    headers, _ = booking_customer
+    expected = static_confirmation()
+    expected["items"][0].update(duration_minutes=60, price="90.00")
+    expected.update(total_duration_minutes=60, total_price="90.00")
+    original_transaction = appointments.transaction
+    original_available = appointments.AppointmentService._ensure_available
+    checked = []
+
+    @contextmanager
+    def update_before_lock(conn):
+        execute(http_data[0], "UPDATE services SET name='Fresh snapshot',default_duration_minutes=60,default_price=90 WHERE id=1")
+        with original_transaction(conn):
+            yield conn
+
+    def check(**kwargs):
+        if kwargs.get("expected_end") is not None:
+            assert kwargs["connection"].in_transaction
+            checked.append(kwargs["expected_end"].isoformat())
+        return original_available(**kwargs)
+
+    monkeypatch.setattr(appointments, "transaction", update_before_lock)
+    monkeypatch.setattr(appointments.AppointmentService, "_ensure_available", staticmethod(check))
+    response = client.post(ROOT + "/appointments", json={**search_body(), "confirmation": expected}, headers=headers)
+    assert response.status_code == 201, response.text
+    value = response.json()
+    assert value["end_datetime"] == checked[0] == "2027-01-04T11:00:00"
+    assert value["items"][0]["service_name"] == "Fresh snapshot"
+    assert value["items"][0]["price"] == "90.00" and value["items"][0]["duration_minutes"] == 60
+    with closing(database.open_development_database(http_data[0])) as conn:
+        assert conn.execute("SELECT end_datetime FROM appointments").fetchone()[0] == checked[0]
+
+
+def test_actual_item_insert_error_rolls_back_parent(client, http_data, booking_customer, monkeypatch):
+    import sqlite3
+    headers, _ = booking_customer
+    expected = confirmation(preview(client, headers)["requested_availability"]["quote"])
+    original = database.open_development_database
+
+    def deny_items(*args, **kwargs):
+        conn = original(*args, **kwargs)
+        conn.set_authorizer(lambda action, table, *rest: sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_INSERT and table == "appointment_items" else sqlite3.SQLITE_OK)
+        return conn
+
+    monkeypatch.setattr(database, "open_development_database", deny_items)
+    result = client.post(ROOT + "/appointments", json={**search_body(), "confirmation": expected}, headers=headers)
+    assert result.status_code == 500
+    assert counts(http_data[0]) == (0, 0)
+
+
+@pytest.mark.parametrize("eligible", [True, False])
+def test_incompatible_requested_staff_can_discover_others_or_empty(client, http_data, booking_customer, eligible):
+    headers, _ = booking_customer
+    execute(http_data[0], "UPDATE staff_services SET is_active=0 WHERE staff_id=1")
+    if not eligible:
+        execute(http_data[0], "UPDATE staff_services SET is_active=0")
+    result = preview(client, headers, search_body(include_alternatives=True))
+    assert not result["requested_availability"]["available"]
+    found = result["alternatives"]
+    if eligible:
+        assert found["search_id"] and all(option["staff_id"] == 2 for option in found["options"])
+        assert {option["priority_group"] for option in found["options"]} == {2, 4}
+    else:
+        assert found["search_id"] is None and found["options"] == []
+        assert not app.state.booking_contexts._contexts and not app.state.booking_searches._records
+
+
+def test_http_search_admission_is_bounded_without_eviction(client, http_data, booking_customer):
+    headers, _ = booking_customer
+    occupy(http_data)
+    searches = [preview(client, headers, search_body(include_alternatives=True))["alternatives"] for _ in range(5)]
+    first = searches[0]
+    app.state.booking_contexts.claim_selection(first["search_id"], first["options"][0]["option_id"])
+    denied = client.post(ROOT + "/booking-searches", json=search_body(include_alternatives=True), headers=headers)
+    assert denied.status_code == 429 and denied.headers["retry-after"] == "1"
+    assert len(app.state.booking_searches._records) == len(app.state.booking_contexts._contexts) == 5
+    assert first["search_id"] in app.state.booking_contexts._claimed_search_ids
+    assert not app.state.booking_searches._pending
+
+
+def test_failed_registration_cleans_context_and_admission(client, http_data, booking_customer, monkeypatch):
+    headers, _ = booking_customer
+    occupy(http_data)
+    original = app.state.booking_searches.publish
+
+    def fail(*args):
+        original(*args)
+        raise RuntimeError("AUDIT_ONLY_REGISTRATION_FAILURE")
+
+    monkeypatch.setattr(app.state.booking_searches, "publish", fail)
+    result = client.post(ROOT + "/booking-searches", json=search_body(include_alternatives=True), headers=headers)
+    assert result.status_code == 500 and "AUDIT_ONLY_REGISTRATION_FAILURE" not in result.text
+    assert not app.state.booking_searches._pending and not app.state.booking_searches._records
+    assert not app.state.booking_contexts._contexts
+
+
+def test_separate_owned_searches_can_book_independent_slots_concurrently(client, http_data, booking_customer, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    headers, _ = booking_customer
+    occupy(http_data)
+    searches = [preview(client, headers, search_body(include_alternatives=True))["alternatives"] for _ in range(2)]
+    assert searches[0]["search_id"] != searches[1]["search_id"]
+    barrier = Barrier(2)
+    original = appointments.AppointmentService.book
+
+    def together(*args, **kwargs):
+        barrier.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(appointments.AppointmentService, "book", together)
+    def choose(index):
+        found = searches[index]
+        option = found["options"][0 if index == 0 else -1]
+        return client.post(ROOT + f"/booking-searches/{found['search_id']}/selection",
+            json={"option_id": option["option_id"], "confirmation": confirmation(option)}, headers=headers)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(choose, range(2)))
+    assert [r.status_code for r in results] == [201, 201], [r.text for r in results]
+    assert counts(http_data[0]) == (3, 3)
+
+
+def test_stale_selected_slot_maps_error_and_releases_claim(client, http_data, booking_customer):
+    headers, _ = booking_customer
+    occupy(http_data)
+    found = preview(client, headers, search_body(include_alternatives=True))["alternatives"]
+    option = found["options"][0]
+    with closing(database.open_development_database(http_data[0])) as conn:
+        with database.transaction(conn):
+            repositories.create_appointment(conn, 1, 1, option["staff_id"], option["start_datetime"], option["end_datetime"],
+                items=[{"service_id": 1, "service_name": "Haircut", "duration_minutes": 45, "price": 80.0}])
+    result = client.post(ROOT + f"/booking-searches/{found['search_id']}/selection",
+        json={"option_id": option["option_id"], "confirmation": confirmation(option)}, headers=headers)
+    assert result.status_code == 409 and result.json()["error"]["code"] == "SELECTED_ALTERNATIVE_NO_LONGER_AVAILABLE"
+    assert counts(http_data[0]) == (2, 2)
+    assert not app.state.booking_contexts._claimed_search_ids
+    assert found["search_id"] in app.state.booking_searches._records
+
+
+def test_preview_quote_reads_one_configuration_snapshot(client, http_data, booking_customer, monkeypatch):
+    headers, _ = booking_customer
+    execute(http_data[0], "PRAGMA journal_mode=WAL")
+    original = availability.AvailabilityEngine.check
+
+    def change_after_availability(self, *args, **kwargs):
+        assert self.connection.in_transaction
+        result = original(self, *args, **kwargs)
+        execute(http_data[0], "UPDATE services SET default_price=90,default_duration_minutes=60 WHERE id=1")
+        return result
+
+    monkeypatch.setattr(availability.AvailabilityEngine, "check", change_after_availability)
+    quote = preview(client, headers)["requested_availability"]["quote"]
+    assert quote["total_duration_minutes"] == 45 and quote["total_price"] == "80.00"
+    assert quote["end_datetime"] == "2027-01-04T10:45:00"
+
+
+def test_http_month_end_window_clamps_without_fixed_day_count(client, http_data, booking_customer):
+    headers, clock = booking_customer
+    clock[0] = datetime(2027, 1, 31, 9)
+    session = login(client, http_data[2]["CUSTOMER"])
+    headers = {"Origin": DEVELOPMENT_ORIGIN, "X-CSRF-Token": session.json()["csrf_token"]}
+    execute(http_data[0], "UPDATE business_settings SET booking_window_months=1")
+    exact = client.post(ROOT + "/booking-searches", json=search_body(start_datetime="2027-02-28T09:00:00"), headers=headers)
+    assert exact.status_code == 200, exact.text
+    beyond = client.post(ROOT + "/booking-searches", json=search_body(start_datetime="2027-02-28T09:00:00.000001"), headers=headers)
+    assert beyond.status_code == 422 and beyond.json()["error"]["code"] == "BOOKING_WINDOW_EXCEEDED"
+
+
+def test_off_grid_requested_booking_remains_legal(client, http_data, booking_customer):
+    headers, _ = booking_customer
+    request = search_body(start_datetime="2027-01-04T12:47:00")
+    quote = preview(client, headers, request)["requested_availability"]["quote"]
+    assert quote["start_datetime"] == "2027-01-04T12:47:00"
+    result = client.post(ROOT + "/appointments", json={**request, "confirmation": confirmation(quote)}, headers=headers)
+    assert result.status_code == 201 and result.json()["end_datetime"] == "2027-01-04T13:32:00"

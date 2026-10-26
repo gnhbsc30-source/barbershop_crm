@@ -24,5 +24,5 @@ def scheduling_clock_ready(business_timezone: str) -> bool:
     try:
         stamp = time.time()
         return time.localtime(stamp).tm_gmtoff == int(datetime.fromtimestamp(stamp, ZoneInfo(business_timezone)).utcoffset().total_seconds())
-    except (AttributeError, ValueError, OSError):
+    except (AttributeError, ValueError, OSError, KeyError):
         return False

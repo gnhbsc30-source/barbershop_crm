@@ -415,6 +415,10 @@ class AppointmentService:
             service = services_by_id[service_id]
             duration = staff_service["duration_minutes"]
             price = staff_service["price"]
+            try:
+                resolved_price = float(price if price is not None else service["default_price"])
+            except (TypeError, ValueError, OverflowError):
+                raise BookingConfigurationError() from None
             resolved_items.append(
                 ResolvedAppointmentItem(
                     service_id=service_id,
@@ -424,9 +428,7 @@ class AppointmentService:
                         if duration is not None
                         else service["default_duration_minutes"]
                     ),
-                    price=float(
-                        price if price is not None else service["default_price"]
-                    ),
+                    price=resolved_price,
                 )
             )
 
