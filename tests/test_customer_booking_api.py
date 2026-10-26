@@ -48,6 +48,22 @@ def occupy(http_data):
                 items=[{"service_id": 1, "service_name": "Haircut", "duration_minutes": 45, "price": 80.0}])
 
 
+def confirmation(quote):
+    return {"items": [{k: item[k] for k in ("service_id", "duration_minutes", "price")} for item in quote["items"]],
+            "total_price": quote["total_price"], "total_duration_minutes": quote["total_duration_minutes"], "currency": "ILS"}
+
+
+def preview(client, headers, body=None):
+    response = client.post(ROOT + "/booking-searches", json=body or search_body(), headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def counts(path):
+    with closing(database.open_development_database(path)) as conn:
+        return tuple(conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in ("appointments", "appointment_items"))
+
+
 def test_catalog_is_customer_only_and_safe(client, http_data):
     assert client.get(ROOT + "/services").status_code == 401
     assert login(client, http_data[2]["OWNER"]).status_code == 200
@@ -151,3 +167,146 @@ def test_discovery_failure_cleans_new_context(client, http_data, booking_custome
     response = client.post(ROOT + "/booking-searches", json=search_body(include_alternatives=True), headers=headers)
     assert response.status_code == 503
     assert not app.state.booking_contexts._contexts and not app.state.booking_searches._pending
+
+
+def test_direct_booking_persists_confirmed_snapshots_and_conflict(client, http_data, booking_customer):
+    headers, _ = booking_customer
+    request = search_body(service_ids=[2, 1])
+    quote = preview(client, headers, request)["requested_availability"]["quote"]
+    body = {**request, "confirmation": confirmation(quote), "notes": "Synthetic booking"}
+    response = client.post(ROOT + "/appointments", json=body, headers=headers)
+    assert response.status_code == 201, response.text
+    value = response.json()
+    assert value["total_price"] == "120.00" and value["end_datetime"] == "2027-01-04T11:05:00"
+    assert response.headers["location"] == ROOT + f"/appointments/{value['appointment_id']}"
+    assert counts(http_data[0]) == (1, 2)
+    with closing(database.open_development_database(http_data[0])) as conn:
+        items = list(conn.execute("SELECT service_id,service_name,duration_minutes,price FROM appointment_items ORDER BY id"))
+        assert [tuple(row) for row in items] == [(2, "Beard trim", 20, 40), (1, "Haircut", 45, 80)]
+    assert client.post(ROOT + "/appointments", json=body, headers=headers).status_code == 409
+    assert counts(http_data[0]) == (1, 2)
+
+
+@pytest.mark.parametrize("change", ["higher", "lower", "duration", "total", "order", "allocation"])
+def test_changed_quote_never_inserts(client, http_data, booking_customer, change):
+    headers, _ = booking_customer
+    request = search_body(service_ids=[1, 2])
+    expected = confirmation(preview(client, headers, request)["requested_availability"]["quote"])
+    if change in ("higher", "lower"):
+        execute(http_data[0], "UPDATE services SET default_price=? WHERE id=1", (90 if change == "higher" else 70,))
+    elif change == "duration":
+        execute(http_data[0], "UPDATE services SET default_duration_minutes=50 WHERE id=1")
+    elif change == "allocation":
+        execute(http_data[0], "UPDATE services SET default_price=default_price+CASE WHEN id=1 THEN 10 ELSE -10 END")
+    elif change == "total":
+        expected["total_price"] = "119.00"
+    else:
+        expected["items"].reverse()
+    response = client.post(ROOT + "/appointments", json={**request, "confirmation": expected}, headers=headers)
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "BOOKING_QUOTE_CHANGED"
+    assert counts(http_data[0]) == (0, 0)
+
+
+@pytest.mark.parametrize("price,status", [(90, 409), (1.005, 503)])
+def test_configuration_race_before_write_transaction(client, http_data, booking_customer, monkeypatch, price, status):
+    from contextlib import contextmanager
+    headers, _ = booking_customer
+    expected = confirmation(preview(client, headers)["requested_availability"]["quote"])
+    original = appointments.transaction
+    statements = []
+
+    @contextmanager
+    def change_before_lock(conn):
+        conn.set_trace_callback(statements.append)
+        execute(http_data[0], "UPDATE services SET default_price=? WHERE id=1", (price,))
+        with original(conn):
+            yield conn
+
+    monkeypatch.setattr(appointments, "transaction", change_before_lock)
+    response = client.post(ROOT + "/appointments", json={**search_body(), "confirmation": expected}, headers=headers)
+    assert response.status_code == status
+    assert counts(http_data[0]) == (0, 0)
+    assert not any(s.lstrip().upper().startswith("INSERT") for s in statements)
+
+
+def test_item_insert_failure_rolls_back_whole_booking(client, http_data, booking_customer, monkeypatch):
+    headers, _ = booking_customer
+    expected = confirmation(preview(client, headers)["requested_availability"]["quote"])
+    original = appointments.create_appointment
+
+    def fail_after_insert(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("AUDIT_ONLY_PRIVATE_ERROR")
+
+    monkeypatch.setattr(appointments, "create_appointment", fail_after_insert)
+    response = client.post(ROOT + "/appointments", json={**search_body(), "confirmation": expected}, headers=headers)
+    assert response.status_code == 500 and "AUDIT_ONLY_PRIVATE_ERROR" not in response.text
+    assert counts(http_data[0]) == (0, 0)
+
+
+def test_selected_booking_success_expires_search_and_replay_is_rejected(client, http_data, booking_customer):
+    headers, _ = booking_customer
+    occupy(http_data)
+    found = preview(client, headers, search_body(include_alternatives=True))["alternatives"]
+    selected = found["options"][0]
+    url = ROOT + f"/booking-searches/{found['search_id']}/selection"
+    body = {"option_id": selected["option_id"], "confirmation": confirmation(selected)}
+    response = client.post(url, json=body, headers=headers)
+    assert response.status_code == 201, response.text
+    assert response.json()["start_datetime"] == selected["start_datetime"]
+    assert not app.state.booking_contexts._contexts and not app.state.booking_searches._records
+    assert client.post(url, json=body, headers=headers).status_code == 410
+    assert counts(http_data[0]) == (2, 2)
+
+
+def test_failed_selected_confirmation_releases_claim_and_allows_retry(client, http_data, booking_customer):
+    headers, _ = booking_customer
+    occupy(http_data)
+    found = preview(client, headers, search_body(include_alternatives=True))["alternatives"]
+    option = found["options"][0]
+    expected = confirmation(option)
+    url = ROOT + f"/booking-searches/{found['search_id']}/selection"
+    expected["total_price"] = "1.00"
+    bad = client.post(url, json={"option_id": option["option_id"], "confirmation": expected}, headers=headers)
+    assert bad.status_code == 409 and bad.json()["error"]["code"] == "BOOKING_QUOTE_CHANGED"
+    assert not app.state.booking_contexts._claimed_search_ids
+    assert counts(http_data[0]) == (1, 1)
+    assert client.post(url, json={"option_id": option["option_id"], "confirmation": confirmation(option)}, headers=headers).status_code == 201
+
+
+def test_other_session_and_expired_search_fail_before_claim(client, http_data, booking_customer, monkeypatch):
+    headers, clock = booking_customer
+    occupy(http_data)
+    found = preview(client, headers, search_body(include_alternatives=True))["alternatives"]
+    option = found["options"][0]
+    url = ROOT + f"/booking-searches/{found['search_id']}/selection"
+    body = {"option_id": option["option_id"], "confirmation": confirmation(option)}
+    monkeypatch.setattr(app.state.booking_contexts, "claim_selection", lambda *a: pytest.fail("must authorize first"))
+    new = login(client, http_data[2]["CUSTOMER"])
+    new_headers = {"Origin": DEVELOPMENT_ORIGIN, "X-CSRF-Token": new.json()["csrf_token"]}
+    assert client.post(url, json=body, headers=new_headers).status_code == 410
+    clock[0] += timedelta(minutes=15)
+    assert client.post(url, json=body, headers=new_headers).status_code == 410
+    clock[0] += timedelta(hours=1)
+    assert client.post(url, json=body, headers=new_headers).status_code == 401
+
+
+def test_competing_direct_bookings_share_real_final_conflict_protection(client, http_data, booking_customer, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    headers, _ = booking_customer
+    expected = confirmation(preview(client, headers)["requested_availability"]["quote"])
+    barrier = Barrier(2)
+    original = appointments.AppointmentService._ensure_available
+
+    def synchronized(**kwargs):
+        original(**kwargs)
+        if kwargs.get("expected_end") is None:
+            barrier.wait(timeout=5)
+
+    monkeypatch.setattr(appointments.AppointmentService, "_ensure_available", staticmethod(synchronized))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: client.post(ROOT + "/appointments", json={**search_body(), "confirmation": expected}, headers=headers), range(2)))
+    assert sorted(r.status_code for r in results) == [201, 409]
+    assert counts(http_data[0]) == (1, 1)

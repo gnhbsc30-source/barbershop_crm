@@ -16,6 +16,7 @@ from app.db.repositories import (
     get_staff_service,
 )
 from app.services.availability import AvailabilityEngine
+from app.services.booking_confirmation import BookingConfirmation, BookingConfigurationError, format_cents
 
 
 class AppointmentBookingError(ValueError):
@@ -264,6 +265,7 @@ class AppointmentService:
         staff_selection: dict[str, Any],
         notes: str | None = None,
         allow_auto_assign: bool = False,
+        confirmation: BookingConfirmation | None = None,
     ) -> AppointmentBookingResult:
         """Book one appointment after validation and two availability checks."""
         staff_id = self._resolve_selected_staff(
@@ -297,12 +299,27 @@ class AppointmentService:
         )
 
         with transaction(self.connection) as connection:
+            if confirmation is not None:
+                # Re-resolve under the existing write lock. Nothing from the
+                # preflight quote may become a persisted confirmed snapshot.
+                requested_start, items = self.resolve(
+                    business_id=business_id, customer_id=customer_id, staff_id=staff_id,
+                    start_datetime=start_datetime, service_ids=service_ids,
+                )
+                actual = BookingConfirmation.from_items(items)
+                if actual != confirmation:
+                    raise AppointmentBookingError("BOOKING_QUOTE_CHANGED")
+                total_duration = actual.total_duration_minutes
+                total_price = float(format_cents(actual.total_price_cents))
+                requested_end = requested_start + timedelta(minutes=total_duration)
+                self._ensure_booking_policy(business_id=business_id, requested_start=requested_start)
             self._ensure_available(
                 connection=connection,
                 business_id=business_id,
                 staff_id=staff_id,
                 service_ids=service_ids,
                 start_datetime=requested_start,
+                **({"expected_end": requested_end} if confirmation is not None else {}),
             )
             appointment_id = create_appointment(
                 connection=connection,
@@ -523,6 +540,7 @@ class AppointmentService:
         staff_id: int,
         service_ids: list[int],
         start_datetime: datetime,
+        expected_end: datetime | None = None,
     ) -> None:
         availability = AvailabilityEngine(connection).check(
             business_id=business_id,
@@ -532,3 +550,7 @@ class AppointmentService:
         )
         if not availability.available:
             raise AppointmentBookingError("APPOINTMENT_UNAVAILABLE")
+        if expected_end is not None and (
+            availability.staff_id != staff_id or availability.end_datetime != expected_end.isoformat()
+        ):
+            raise BookingConfigurationError()

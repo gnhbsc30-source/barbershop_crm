@@ -5,6 +5,7 @@ from app.services.appointments import AppointmentBookingError, AppointmentServic
 from app.services.availability import AvailabilityEngine
 from app.services.booking_confirmation import BookingConfirmation, format_cents, real_to_cents
 from app.services.alternatives import AlternativeDiscoveryService
+from app.services.alternative_selection_execution import AlternativeSelectionService
 from datetime import datetime
 from dataclasses import asdict
 
@@ -97,3 +98,24 @@ class CustomerBooking:
         items = self.appointments.resolve_staff_services(business_id=self.business_id, staff_id=staff_id, service_ids=service_ids)
         return {"staff_id": staff_id, "staff_name": staff["name"], "start_datetime": start, "end_datetime": end,
                 **item_summary(items)}
+
+    def booked_response(self, result, notes):
+        staff = repositories.get_staff(self.connection, self.business_id, result.staff_id)
+        return {"appointment_id": result.appointment_id, "staff_id": result.staff_id, "staff_name": staff["name"],
+                "start_datetime": result.start_datetime, "end_datetime": result.end_datetime,
+                "status": "BOOKED", "notes": notes, **item_summary(result.items)}
+
+    def book(self, data):
+        result = self.appointments.book(
+            business_id=self.business_id, customer_id=self.principal.customer_id,
+            service_ids=data.service_ids, staff_selection=data.staff_selection.model_dump(),
+            start_datetime=data.start_datetime, notes=data.notes, confirmation=data.confirmation.domain())
+        return self.booked_response(result, data.notes)
+
+    def select(self, search_id, data, owner, contexts, ownership):
+        ownership.authorize(search_id, owner)
+        result = AlternativeSelectionService(contexts, self.appointments).book_selected_alternative(
+            search_id=search_id, option_id=data.option_id, customer_id=self.principal.customer_id,
+            notes=data.notes, confirmation=data.confirmation.domain())
+        ownership.consumed(search_id, owner)
+        return self.booked_response(result, data.notes)

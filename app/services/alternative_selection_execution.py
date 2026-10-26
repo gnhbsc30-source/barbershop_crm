@@ -9,6 +9,7 @@ from app.services.appointments import (
     AppointmentBookingResult,
     AppointmentService,
 )
+from app.services.booking_confirmation import BookingConfirmation
 
 
 class AlternativeSelectionService:
@@ -42,6 +43,7 @@ class AlternativeSelectionService:
         option_id: str,
         customer_id: int,
         notes: str | None = None,
+        confirmation: BookingConfirmation | None = None,
     ) -> AppointmentBookingResult:
         """Resolve trusted selection data and book it with fresh validation."""
         selection = self._selection_context_store.claim_selection(
@@ -57,6 +59,7 @@ class AlternativeSelectionService:
                 service_ids=list(selection.requested_service_ids),
                 staff_selection={"type": "SPECIFIC", "staff_id": selection.staff_id},
                 notes=notes,
+                **({"confirmation": confirmation} if confirmation is not None else {}),
             )
         except AppointmentBookingError as error:
             self._selection_context_store.release_selection_claim(search_id)
