@@ -53,3 +53,22 @@ async def select(search_id: str, request: Request, context=Depends(require_custo
     value = await run_in_threadpool(execute_booking, request, context,
         lambda service: service.select(search_id, data, search_owner(request, context), request.app.state.booking_contexts, request.app.state.booking_searches), True)
     return created(value)
+
+
+@router.get("/appointments")
+def history(request: Request, context=Depends(require_customer)):
+    query_keys(request, allowed=("limit", "before_id", "status"))
+    limit = positive_query(request.query_params.get("limit", "20"))
+    before = request.query_params.get("before_id")
+    before = positive_query(before) if before is not None else None
+    status = request.query_params.get("status")
+    if limit > 100 or (status is not None and status not in ("BOOKED", "COMPLETED", "CANCELLED", "NO_SHOW")):
+        raise AuthHTTPError(422, "INVALID_REQUEST")
+    return execute_booking(request, context, lambda service: service.history(limit=limit, before_id=before, status=status))
+
+
+@router.get("/appointments/{appointment_id}")
+def detail(appointment_id: str, request: Request, context=Depends(require_customer)):
+    query_keys(request)
+    identifier = positive_query(appointment_id)
+    return execute_booking(request, context, lambda service: service.history(appointment_id=identifier))

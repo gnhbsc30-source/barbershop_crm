@@ -16,6 +16,37 @@ def get_booking_business(connection: Connection, business_id: int) -> dict[str, 
     return dict(row) if row else None
 
 
+def get_customer_appointment_rows(connection: Connection, business_id: int, customer_id: int, *,
+                                  limit: int = 21, before_id: int | None = None,
+                                  status: str | None = None, appointment_id: int | None = None) -> list[dict[str, Any]]:
+    query = """SELECT a.id AS appointment_id, a.staff_id, s.name AS staff_name,
+                      a.start_datetime, a.end_datetime, a.status, a.notes
+               FROM appointments AS a
+               JOIN staff AS s ON s.business_id = a.business_id AND s.id = a.staff_id
+               WHERE a.business_id = ? AND a.customer_id = ?"""
+    parameters = [business_id, customer_id]
+    for clause, value in (("a.id < ?", before_id), ("a.status = ?", status), ("a.id = ?", appointment_id)):
+        if value is not None:
+            query += " AND " + clause
+            parameters.append(value)
+    query += " ORDER BY a.id DESC LIMIT ?"
+    return [dict(row) for row in connection.execute(query, [*parameters, limit]).fetchall()]
+
+
+def get_customer_appointment_items(connection: Connection, business_id: int, customer_id: int,
+                                   appointment_ids: list[int]) -> list[dict[str, Any]]:
+    if not appointment_ids:
+        return []
+    placeholders = ",".join("?" for _ in appointment_ids)
+    rows = connection.execute(
+        f"""SELECT i.appointment_id, i.service_id, i.service_name, i.duration_minutes, i.price
+            FROM appointment_items AS i
+            JOIN appointments AS a ON a.business_id = i.business_id AND a.id = i.appointment_id
+            WHERE a.business_id = ? AND a.customer_id = ? AND i.appointment_id IN ({placeholders})
+            ORDER BY i.appointment_id, i.id""", [business_id, customer_id, *appointment_ids]).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_user_account_identity(
     connection: Connection,
     business_id: int,

@@ -310,3 +310,81 @@ def test_competing_direct_bookings_share_real_final_conflict_protection(client, 
         results = list(pool.map(lambda _: client.post(ROOT + "/appointments", json={**search_body(), "confirmation": expected}, headers=headers), range(2)))
     assert sorted(r.status_code for r in results) == [201, 409]
     assert counts(http_data[0]) == (1, 1)
+
+
+def test_history_snapshots_status_and_keyset_pagination(client, http_data, booking_customer):
+    headers, _ = booking_customer
+    for hour in (10, 11, 12):
+        request = search_body(start_datetime=f"2027-01-04T{hour}:00:00")
+        expected = confirmation(preview(client, headers, request)["requested_availability"]["quote"])
+        assert client.post(ROOT + "/appointments", json={**request, "confirmation": expected}, headers=headers).status_code == 201
+    execute(http_data[0], "UPDATE appointments SET status='CANCELLED' WHERE id=2")
+    execute(http_data[0], "UPDATE services SET name='Changed',default_price=999,is_active=0 WHERE id=1")
+    first = client.get(ROOT + "/appointments?limit=2")
+    assert first.status_code == 200
+    assert [a["appointment_id"] for a in first.json()["appointments"]] == [3, 2]
+    assert first.json()["has_more"] and first.json()["next_before_id"] == 2
+    second = client.get(ROOT + "/appointments?limit=2&before_id=2").json()
+    assert [a["appointment_id"] for a in second["appointments"]] == [1]
+    assert not second["has_more"] and second["next_before_id"] is None
+    cancelled = client.get(ROOT + "/appointments?status=CANCELLED").json()["appointments"]
+    assert len(cancelled) == 1 and cancelled[0]["appointment_id"] == 2
+    detail = client.get(ROOT + "/appointments/1").json()
+    assert detail["items"][0]["service_name"] == "Haircut"
+    assert detail["total_price"] == "80.00"
+
+
+def test_account_id_is_not_customer_id_in_booking_and_history(client, http_data, booking_customer):
+    _, _ = booking_customer
+    path = http_data[0]
+    execute(path, "INSERT INTO customers (id,business_id,name,customer_type) VALUES (10,1,'Linked','REGISTERED')")
+    execute(path, "UPDATE customer_accounts SET customer_id=10 WHERE id=1")
+    result = login(client, http_data[2]["CUSTOMER"])
+    assert result.json()["principal"]["subject"] == "customer_account:1"
+    assert result.json()["principal"]["customer_id"] == 10
+    headers = {"Origin": DEVELOPMENT_ORIGIN, "X-CSRF-Token": result.json()["csrf_token"]}
+    occupy(http_data)  # Customer 1's appointment must not appear for customer 10.
+    request = search_body(start_datetime="2027-01-04T12:00:00")
+    expected = confirmation(preview(client, headers, request)["requested_availability"]["quote"])
+    booked = client.post(ROOT + "/appointments", json={**request, "confirmation": expected}, headers=headers)
+    assert booked.status_code == 201
+    own_id = booked.json()["appointment_id"]
+    with closing(database.open_development_database(path)) as conn:
+        assert conn.execute("SELECT customer_id FROM appointments WHERE id=?", (own_id,)).fetchone()[0] == 10
+    assert [row["appointment_id"] for row in client.get(ROOT + "/appointments").json()["appointments"]] == [own_id]
+    assert client.get(ROOT + "/appointments/1").status_code == 404
+    assert client.get(ROOT + "/appointments/999").status_code == 404
+
+
+@pytest.mark.parametrize("query", ["?limit=0", "?limit=101", "?limit=true", "?limit=1&limit=2", "?before_id=-1", "?status=OTHER", "?customer_id=2", "?before_id=" + "9" * 100])
+def test_history_query_bounds(client, booking_customer, query):
+    assert client.get(ROOT + "/appointments" + query).status_code == 422
+
+
+def test_history_uses_two_queries_and_one_consistent_snapshot(client, http_data, booking_customer, monkeypatch):
+    headers, _ = booking_customer
+    occupy(http_data)
+    execute(http_data[0], "PRAGMA journal_mode=WAL")
+    original = repositories.get_customer_appointment_rows
+    actual_items = repositories.get_customer_appointment_items
+    item_calls = []
+
+    def race(conn, *args, **kwargs):
+        assert conn.in_transaction
+        rows = original(conn, *args, **kwargs)
+        execute(http_data[0], "UPDATE appointment_items SET price=90 WHERE appointment_id=1")
+        return rows
+
+    def tracked(conn, *args, **kwargs):
+        assert conn.in_transaction
+        item_calls.append(True)
+        return actual_items(conn, *args, **kwargs)
+
+    monkeypatch.setattr(repositories, "get_customer_appointment_rows", race)
+    monkeypatch.setattr(repositories, "get_customer_appointment_items", tracked)
+    response = client.get(ROOT + "/appointments")
+    assert response.status_code == 200
+    assert response.json()["appointments"][0]["total_price"] == "80.00"
+    assert len(item_calls) == 1
+    monkeypatch.setattr(repositories, "get_customer_appointment_rows", original)
+    assert client.get(ROOT + "/appointments/1").json()["total_price"] == "90.00"

@@ -25,7 +25,7 @@ def query_keys(request: Request, allowed=(), repeated=()):
 
 
 def positive_query(value: str) -> int:
-    if not value.isascii() or not value.isdecimal() or not 0 < int(value) <= 2**63 - 1:
+    if not 1 <= len(value) <= 19 or not value.isascii() or not value.isdecimal() or not 0 < int(value) <= 2**63 - 1:
         raise AuthHTTPError(422, "INVALID_REQUEST")
     return int(value)
 
@@ -85,7 +85,7 @@ def execute_booking(request, context, operation, scheduling=False):
         raise AuthHTTPError(503, "BOOKING_CONFIGURATION_INVALID") from None
     except (AppointmentBookingError, AlternativeSelectionError) as error:
         code = error.code
-        if code in ("STAFF_NOT_FOUND", "STAFF_INACTIVE", "SERVICE_NOT_FOUND", "ALTERNATIVE_OPTION_NOT_FOUND"):
+        if code in ("STAFF_NOT_FOUND", "STAFF_INACTIVE", "SERVICE_NOT_FOUND", "ALTERNATIVE_OPTION_NOT_FOUND", "APPOINTMENT_NOT_FOUND"):
             status = 404
         elif code == "ALTERNATIVE_SEARCH_EXPIRED":
             status = 410

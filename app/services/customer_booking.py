@@ -1,7 +1,8 @@
 """Customer application orchestration, reusing deterministic domain services."""
 
 from app.db import repositories
-from app.services.appointments import AppointmentBookingError, AppointmentService
+from app.services.appointments import AppointmentBookingError, AppointmentService, ResolvedAppointmentItem
+from app.db.database import read_snapshot
 from app.services.availability import AvailabilityEngine
 from app.services.booking_confirmation import BookingConfirmation, format_cents, real_to_cents
 from app.services.alternatives import AlternativeDiscoveryService
@@ -119,3 +120,25 @@ class CustomerBooking:
             notes=data.notes, confirmation=data.confirmation.domain())
         ownership.consumed(search_id, owner)
         return self.booked_response(result, data.notes)
+
+    def history(self, *, limit=20, before_id=None, status=None, appointment_id=None):
+        with read_snapshot(self.connection):
+            rows = repositories.get_customer_appointment_rows(
+                self.connection, self.business_id, self.principal.customer_id,
+                limit=limit + 1, before_id=before_id, status=status, appointment_id=appointment_id)
+            if appointment_id is not None and not rows:
+                raise AppointmentBookingError("APPOINTMENT_NOT_FOUND")
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+            items = repositories.get_customer_appointment_items(
+                self.connection, self.business_id, self.principal.customer_id,
+                [row["appointment_id"] for row in rows])
+            grouped = {row["appointment_id"]: [] for row in rows}
+            for item in items:
+                grouped[item["appointment_id"]].append(ResolvedAppointmentItem(
+                    item["service_id"], item["service_name"], item["duration_minutes"], item["price"]))
+            values = [{**row, **item_summary(grouped[row["appointment_id"]])} for row in rows]
+            if appointment_id is not None:
+                return values[0]
+            return {"appointments": values, "has_more": has_more,
+                    "next_before_id": rows[-1]["appointment_id"] if has_more else None}
