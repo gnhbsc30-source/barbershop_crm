@@ -266,8 +266,13 @@ class AppointmentService:
         notes: str | None = None,
         allow_auto_assign: bool = False,
         confirmation: BookingConfirmation | None = None,
+        before_commit: Callable[[AppointmentBookingResult], None] | None = None,
     ) -> AppointmentBookingResult:
-        """Book one appointment after validation and two availability checks."""
+        """Book after validation and two availability checks.
+
+        An optional internal callback prepares the response under the write
+        transaction. It must not commit or perform external side effects.
+        """
         staff_id = self._resolve_selected_staff(
             business_id=business_id,
             start_datetime=start_datetime,
@@ -340,15 +345,19 @@ class AppointmentService:
                 ],
             )
 
-        return AppointmentBookingResult(
-            appointment_id=appointment_id,
-            staff_id=staff_id,
-            start_datetime=requested_start.isoformat(),
-            end_datetime=requested_end.isoformat(),
-            total_duration_minutes=total_duration,
-            total_price=total_price,
-            items=items,
-        )
+            result = AppointmentBookingResult(
+                appointment_id=appointment_id,
+                staff_id=staff_id,
+                start_datetime=requested_start.isoformat(),
+                end_datetime=requested_end.isoformat(),
+                total_duration_minutes=total_duration,
+                total_price=total_price,
+                items=items,
+            )
+            if before_commit is not None:
+                before_commit(result)
+
+        return result
 
     def resolve(
         self,
@@ -415,10 +424,10 @@ class AppointmentService:
             service = services_by_id[service_id]
             duration = staff_service["duration_minutes"]
             price = staff_service["price"]
-            try:
-                resolved_price = float(price if price is not None else service["default_price"])
-            except (TypeError, ValueError, OverflowError):
-                raise BookingConfigurationError() from None
+            if price is None:
+                price = service["default_price"]
+            if type(price) not in (int, float):
+                raise BookingConfigurationError()
             resolved_items.append(
                 ResolvedAppointmentItem(
                     service_id=service_id,
@@ -428,7 +437,7 @@ class AppointmentService:
                         if duration is not None
                         else service["default_duration_minutes"]
                     ),
-                    price=resolved_price,
+                    price=float(price),
                 )
             )
 

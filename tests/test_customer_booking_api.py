@@ -786,3 +786,66 @@ def test_off_grid_requested_booking_remains_legal(client, http_data, booking_cus
     assert quote["start_datetime"] == "2027-01-04T12:47:00"
     result = client.post(ROOT + "/appointments", json={**request, "confirmation": confirmation(quote)}, headers=headers)
     assert result.status_code == 201 and result.json()["end_datetime"] == "2027-01-04T13:32:00"
+
+
+@pytest.mark.parametrize("selected", [False, True])
+def test_booking_response_failure_rolls_back_before_commit(client, http_data, booking_customer, monkeypatch, selected):
+    from app.services.customer_booking import CustomerBooking
+
+    headers, _ = booking_customer
+    if selected:
+        occupy(http_data)
+        found = preview(client, headers, search_body(include_alternatives=True))["alternatives"]
+        option = found["options"][0]
+        url = ROOT + f"/booking-searches/{found['search_id']}/selection"
+        body = {"option_id": option["option_id"], "confirmation": confirmation(option)}
+    else:
+        url = ROOT + "/appointments"
+        body = {**search_body(), "confirmation": confirmation(preview(client, headers)["requested_availability"]["quote"])}
+    before = counts(http_data[0])
+
+    def fail_response(*args):
+        raise RuntimeError("synthetic response preparation failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(CustomerBooking, "booked_response", fail_response)
+        response = client.post(url, json=body, headers=headers)
+    assert response.status_code == 500
+    assert counts(http_data[0]) == before
+    assert client.post(url, json=body, headers=headers).status_code == 201
+
+
+@pytest.mark.parametrize("cleanup", ["context", "ownership"])
+def test_committed_selection_returns_success_when_cleanup_fails(client, http_data, booking_customer, monkeypatch, cleanup):
+    headers, _ = booking_customer
+    occupy(http_data)
+    found = preview(client, headers, search_body(include_alternatives=True))["alternatives"]
+    url = ROOT + f"/booking-searches/{found['search_id']}/selection"
+    first, second = found["options"][:2]
+    store = app.state.booking_contexts
+    ownership = app.state.booking_searches
+
+    def fail_cleanup(*args):
+        raise RuntimeError("synthetic cleanup failure")
+
+    if cleanup == "context":
+        monkeypatch.setattr(store, "expire_search_context", fail_cleanup)
+    else:
+        monkeypatch.setattr(ownership, "consumed", fail_cleanup)
+
+    response = client.post(url, json={"option_id": first["option_id"], "confirmation": confirmation(first)}, headers=headers)
+    assert response.status_code == 201
+    assert client.get(response.headers["location"]).json() == response.json()
+    replay = client.post(url, json={"option_id": second["option_id"], "confirmation": confirmation(second)}, headers=headers)
+    assert replay.status_code == 410
+    assert counts(http_data[0]) == (2, 2)
+
+
+def test_numeric_blob_price_is_rejected_without_coercion(client, http_data, booking_customer):
+    headers, _ = booking_customer
+    body = {**search_body(), "confirmation": confirmation(preview(client, headers)["requested_availability"]["quote"])}
+    execute(http_data[0], "UPDATE staff_services SET price = CAST('80.00' AS BLOB) WHERE staff_id = 1 AND service_id = 1")
+    response = client.post(ROOT + "/appointments", json=body, headers=headers)
+    assert response.status_code == 503
+    assert response.json() == {"error": {"code": "BOOKING_CONFIGURATION_INVALID"}}
+    assert counts(http_data[0]) == (0, 0)

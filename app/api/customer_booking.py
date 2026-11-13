@@ -38,14 +38,14 @@ async def search(request: Request, context=Depends(require_customer_post)):
 
 
 def created(value):
+    value = AppointmentView.model_validate(value).model_dump(mode="json")
     return JSONResponse(value, status_code=201, headers={"Location": f"/api/v1/customer/appointments/{value['appointment_id']}"})
 
 
 @router.post("/appointments", status_code=201, response_model=AppointmentView, openapi_extra=request_contract(BookingRequest))
 async def book(request: Request, context=Depends(require_customer_post)):
     data = await read_customer_body(request, BookingRequest)
-    value = await run_in_threadpool(execute_booking, request, context, lambda service: service.book(data), True, AppointmentView)
-    return created(value)
+    return await run_in_threadpool(execute_booking, request, context, lambda service: service.book(data, created), True)
 
 
 @router.post("/booking-searches/{search_id}/selection", status_code=201, response_model=AppointmentView, openapi_extra=request_contract(SelectionRequest))
@@ -53,9 +53,8 @@ async def select(search_id: str, request: Request, context=Depends(require_custo
     if not 1 <= len(search_id) <= 128:
         raise AuthHTTPError(422, "INVALID_REQUEST")
     data = await read_customer_body(request, SelectionRequest)
-    value = await run_in_threadpool(execute_booking, request, context,
-        lambda service: service.select(search_id, data, search_owner(request, context), request.app.state.booking_contexts, request.app.state.booking_searches), True, AppointmentView)
-    return created(value)
+    return await run_in_threadpool(execute_booking, request, context,
+        lambda service: service.select(search_id, data, search_owner(request, context), request.app.state.booking_contexts, request.app.state.booking_searches, created), True)
 
 
 @router.get("/appointments", response_model=HistoryResponse)

@@ -7,6 +7,7 @@ from app.services.availability import AvailabilityEngine
 from app.services.booking_confirmation import BookingConfirmation, format_cents, real_to_cents
 from app.services.alternatives import AlternativeDiscoveryService
 from app.services.alternative_selection_execution import AlternativeSelectionService
+import logging
 from datetime import datetime
 from dataclasses import asdict
 
@@ -107,20 +108,37 @@ class CustomerBooking:
                 "start_datetime": result.start_datetime, "end_datetime": result.end_datetime,
                 "status": "BOOKED", "notes": notes, **item_summary(result.items)}
 
-    def book(self, data):
-        result = self.appointments.book(
+    def book(self, data, prepare_response):
+        response = None
+
+        def before_commit(result):
+            nonlocal response
+            response = prepare_response(self.booked_response(result, data.notes))
+
+        self.appointments.book(
             business_id=self.business_id, customer_id=self.principal.customer_id,
             service_ids=data.service_ids, staff_selection=data.staff_selection.model_dump(),
-            start_datetime=data.start_datetime, notes=data.notes, confirmation=data.confirmation.domain())
-        return self.booked_response(result, data.notes)
+            start_datetime=data.start_datetime, notes=data.notes, confirmation=data.confirmation.domain(),
+            before_commit=before_commit)
+        return response
 
-    def select(self, search_id, data, owner, contexts, ownership):
+    def select(self, search_id, data, owner, contexts, ownership, prepare_response):
         ownership.authorize(search_id, owner)
-        result = AlternativeSelectionService(contexts, self.appointments).book_selected_alternative(
+        response = None
+
+        def before_commit(result):
+            nonlocal response
+            response = prepare_response(self.booked_response(result, data.notes))
+
+        AlternativeSelectionService(contexts, self.appointments).book_selected_alternative(
             search_id=search_id, option_id=data.option_id, customer_id=self.principal.customer_id,
-            notes=data.notes, confirmation=data.confirmation.domain())
-        ownership.consumed(search_id, owner)
-        return self.booked_response(result, data.notes)
+            notes=data.notes, confirmation=data.confirmation.domain(), before_commit=before_commit)
+        try:
+            ownership.consumed(search_id, owner)
+        except Exception:
+            # Selection execution has already expired the context or kept it claimed.
+            logging.getLogger(__name__).error("Could not remove ownership for a committed booking search")
+        return response
 
     def history(self, *, limit=20, before_id=None, status=None, appointment_id=None):
         with read_snapshot(self.connection):
