@@ -6,7 +6,8 @@ import json
 
 from app.db import repositories
 from app.db.database import read_snapshot
-from app.services.appointments import AppointmentBookingError, ResolvedAppointmentItem
+from app.services.appointments import AppointmentBookingError, AppointmentService, ResolvedAppointmentItem
+from app.services.availability import AvailabilityEngine
 from app.services.customer_booking import item_summary
 
 
@@ -52,6 +53,65 @@ class OwnerAppointments:
         revision = detail.pop("updated_at")
         parse_revision(revision)
         return detail, appointment_etag(self.business_id, revision, detail)
+
+    def customers(self, *, limit, after_id, name_prefix, phone):
+        rows = repositories.list_owner_customers(
+            self.connection, self.business_id, limit=limit + 1, after_id=after_id,
+            name_prefix=name_prefix, phone=phone)
+        return {"customers": rows[:limit],
+                "next_after_id": rows[limit - 1]["customer_id"] if len(rows) > limit else None}
+
+    def booking_options(self, service_ids):
+        with read_snapshot(self.connection):
+            services, staff = repositories.list_owner_booking_catalog(self.connection, self.business_id, 201)
+            if len(services) > 200 or len(staff) > 200:
+                raise OwnerAppointmentError("BOOKING_OPTIONS_LIMIT_EXCEEDED")
+            if service_ids:
+                if not set(service_ids).issubset(row["service_id"] for row in services):
+                    raise OwnerAppointmentError("SERVICE_NOT_FOUND")
+                eligible = AvailabilityEngine(self.connection).get_eligible_staff(self.business_id, service_ids)
+                resolver = AppointmentService(self.connection)
+                staff = [
+                    {"staff_id": row["id"], "staff_name": row["name"], "quote": item_summary(
+                        resolver.resolve_staff_services(business_id=self.business_id,
+                                                        staff_id=row["id"], service_ids=service_ids))}
+                    for row in sorted(eligible, key=lambda row: row["id"])
+                ]
+            return {"services": services, "staff": staff}
+
+    def quote(self, data):
+        with read_snapshot(self.connection):
+            service = AppointmentService(self.connection)
+            items = service.resolve_staff_services(
+                business_id=self.business_id, staff_id=data.staff_id, service_ids=data.service_ids)
+            service.validate_booking_policy(business_id=self.business_id,
+                                             requested_start=datetime.fromisoformat(data.start_datetime))
+            availability = AvailabilityEngine(self.connection).check(
+                self.business_id, data.service_ids, data.start_datetime,
+                {"type": "SPECIFIC", "staff_id": data.staff_id})
+            if not availability.available:
+                return {"available": False, "reason": availability.reason, "quote": None}
+            terms = item_summary(items)
+            for item in terms["items"]:
+                del item["service_name"]
+            return {"available": True, "reason": None, "quote": {
+                "staff_id": data.staff_id, "start_datetime": availability.start_datetime,
+                "end_datetime": availability.end_datetime, "confirmation": terms}}
+
+    def book(self, data, prepare_response):
+        response = None
+
+        def before_commit(result):
+            nonlocal response
+            response = prepare_response(*self._detail(result.appointment_id))
+
+        AppointmentService(self.connection).book(
+            business_id=self.business_id, customer_id=data.customer.customer_id,
+            start_datetime=data.start_datetime, service_ids=data.service_ids,
+            staff_selection={"type": "SPECIFIC", "staff_id": data.staff_id},
+            confirmation=data.confirmation.domain(), notes=data.notes, before_commit=before_commit,
+            require_active_customer=True)
+        return response
 
     def _with_items(self, rows):
         grouped = {row["appointment_id"]: [] for row in rows}

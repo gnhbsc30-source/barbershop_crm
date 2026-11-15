@@ -8,12 +8,16 @@ import re
 import sqlite3
 
 from fastapi import APIRouter, Depends, Request
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
-from app.api.auth_dependencies import AuthHTTPError, require_authenticated_session, require_owner
-from app.api.booking_dependencies import positive_query, query_keys
-from app.api.customer_booking_models import StrictModel
-from app.api.owner_appointment_models import AppointmentDetail, CalendarAppointment
+from app.api.auth_dependencies import AuthHTTPError, require_authenticated_session, require_csrf_session, require_owner
+from app.api.booking_dependencies import positive_query, query_keys, read_customer_body
+from app.api.customer_booking_models import StrictModel, request_contract
+from app.api.owner_appointment_models import (
+    AppointmentDetail, BookingOptions, CalendarAppointment, CustomerPage,
+    OwnerBooking, OwnerSlot, SlotQuote, validated_phone,
+)
 from app.core import booking_clock
 from app.db import database, repositories
 from app.services.appointments import AppointmentBookingError
@@ -130,3 +134,49 @@ def detail(appointment_id: str, request: Request, context=Depends(require_owner)
     query_keys(request)
     identifier = positive_query(appointment_id)
     return execute_owner(request, context, lambda service: detail_response(*service.detail(identifier)))
+
+
+def require_owner_mutation(context=Depends(require_csrf_session)):
+    return require_owner(context)
+
+
+@router.get("/customers", response_model=CustomerPage)
+def customers(request: Request, context=Depends(require_owner)):
+    query_keys(request, allowed=("name_prefix", "phone", "after_id", "limit"))
+    query = request.query_params
+    limit = positive_query(query.get("limit", "20"))
+    after_id = positive_query(query["after_id"]) if "after_id" in query else 0
+    prefix = query.get("name_prefix")
+    phone = query.get("phone")
+    if limit > 50 or (prefix is not None and (phone is not None or not 2 <= len(prefix) <= 100)):
+        raise AuthHTTPError(422, "INVALID_REQUEST")
+    if phone is not None:
+        try:
+            phone = validated_phone(phone)
+        except ValueError:
+            raise AuthHTTPError(422, "INVALID_REQUEST") from None
+    return execute_owner(request, context, lambda service: CustomerPage.model_validate(
+        service.customers(limit=limit, after_id=after_id, name_prefix=prefix, phone=phone)))
+
+
+@router.get("/booking-options", response_model=BookingOptions, response_model_exclude_unset=True)
+def booking_options(request: Request, context=Depends(require_owner)):
+    query_keys(request, allowed=("service_id",), repeated=("service_id",))
+    ids = [positive_query(value) for value in request.query_params.getlist("service_id")]
+    if len(ids) > 20 or len(ids) != len(set(ids)):
+        raise AuthHTTPError(422, "INVALID_REQUEST")
+    return execute_owner(request, context, lambda service: BookingOptions.model_validate(service.booking_options(ids)))
+
+
+@router.post("/appointment-quotes", response_model=SlotQuote, openapi_extra=request_contract(OwnerSlot))
+async def quote(request: Request, context=Depends(require_owner_mutation)):
+    data = await read_customer_body(request, OwnerSlot)
+    return await run_in_threadpool(execute_owner, request, context,
+                                   lambda service: SlotQuote.model_validate(service.quote(data)), scheduling=True)
+
+
+@router.post("/appointments", status_code=201, response_model=AppointmentDetail, openapi_extra=request_contract(OwnerBooking))
+async def book(request: Request, context=Depends(require_owner_mutation)):
+    data = await read_customer_body(request, OwnerBooking)
+    return await run_in_threadpool(execute_owner, request, context, lambda service: service.book(
+        data, lambda detail, etag: detail_response(detail, etag, status=201)), scheduling=True)

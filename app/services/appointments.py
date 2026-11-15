@@ -267,6 +267,7 @@ class AppointmentService:
         allow_auto_assign: bool = False,
         confirmation: BookingConfirmation | None = None,
         before_commit: Callable[[AppointmentBookingResult], None] | None = None,
+        require_active_customer: bool = False,
     ) -> AppointmentBookingResult:
         """Book after validation and two availability checks.
 
@@ -304,6 +305,10 @@ class AppointmentService:
         )
 
         with transaction(self.connection) as connection:
+            if require_active_customer:
+                customer = get_customer(connection, business_id, customer_id)
+                if not customer or not customer["is_active"]:
+                    raise AppointmentBookingError("CUSTOMER_NOT_FOUND")
             if confirmation is not None:
                 # Re-resolve under the existing write lock. Nothing from the
                 # preflight quote may become a persisted confirmed snapshot.

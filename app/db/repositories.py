@@ -780,3 +780,29 @@ def get_owner_appointment_items(connection, business_id, appointment_ids):
             JOIN appointments AS a ON a.business_id = i.business_id AND a.id = i.appointment_id
             WHERE a.business_id = ? AND a.id IN ({placeholders})
             ORDER BY i.appointment_id, i.id""", [business_id, *appointment_ids])]
+
+
+def list_owner_customers(connection, business_id, *, limit, after_id, name_prefix, phone):
+    query = """SELECT id AS customer_id, name, phone FROM customers
+               WHERE business_id = ? AND is_active = 1 AND id > ?"""
+    parameters = [business_id, after_id]
+    if name_prefix is not None:
+        query += " AND substr(name, 1, length(?)) = ? COLLATE NOCASE"
+        parameters.extend((name_prefix, name_prefix))
+    if phone is not None:
+        query += " AND phone = ?"
+        parameters.append(phone)
+    query += " ORDER BY id LIMIT ?"
+    return [dict(row) for row in connection.execute(query, [*parameters, limit])]
+
+
+def list_owner_booking_catalog(connection, business_id, limit):
+    services = connection.execute(
+        """SELECT id AS service_id, name FROM services
+           WHERE business_id = ? AND is_active = 1 ORDER BY id LIMIT ?""",
+        (business_id, limit))
+    staff = connection.execute(
+        """SELECT id AS staff_id, name AS staff_name FROM staff
+           WHERE business_id = ? AND is_active = 1 ORDER BY id LIMIT ?""",
+        (business_id, limit))
+    return [dict(row) for row in services], [dict(row) for row in staff]

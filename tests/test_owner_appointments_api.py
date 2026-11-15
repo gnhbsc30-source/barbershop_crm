@@ -85,3 +85,79 @@ def test_calendar_and_detail_never_read_foreign_appointments(client, owner, http
     assert client.get(CALENDAR).json()["appointments"] == []
     assert client.get(CALENDAR + "&staff_id=9").status_code == 404
     assert client.get(f"{ROOT}/appointments/{appointment}").status_code == 404
+
+
+@pytest.fixture
+def schedule_clock(monkeypatch):
+    from datetime import datetime
+    from app.core import booking_clock
+    from app.services import appointments, availability, owner_appointments
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2027, 1, 4, 9, tzinfo=tz)
+
+    for module in (appointments, availability, owner_appointments):
+        monkeypatch.setattr(module, "datetime", FrozenDatetime)
+    monkeypatch.setattr(booking_clock, "scheduling_clock_ready", lambda zone: zone == "Asia/Jerusalem")
+
+
+SLOT = {"staff_id": 1, "start_datetime": "2027-01-04T10:00:00", "service_ids": [1]}
+
+
+def booking_body(client, headers, *, slot=SLOT, customer=None):
+    quote = client.post(ROOT + "/appointment-quotes", headers=headers, json=slot)
+    assert quote.status_code == 200 and quote.json()["available"], quote.text
+    return {**slot, "confirmation": quote.json()["quote"]["confirmation"],
+            "customer": customer or {"type": "EXISTING", "customer_id": 1}}
+
+
+def counts(path):
+    with closing(database.open_development_database(path)) as connection:
+        return tuple(connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                     for table in ("customers", "customer_accounts", "appointments", "appointment_items"))
+
+
+def test_picker_and_booking_options(client, owner, http_data):
+    path = http_data[0]
+    execute(path, "UPDATE customers SET phone='0501234567', national_id='private' WHERE id=1")
+    execute(path, "INSERT INTO businesses(id,business_name) VALUES (2,'Foreign')")
+    execute(path, "INSERT INTO customers(business_id,name,phone,customer_type) VALUES (2,'Synthetic foreign','0501234567','GUEST')")
+    execute(path, "INSERT INTO customers(business_id,name,phone,customer_type,is_active) VALUES (1,'Synthetic inactive','0501234567','GUEST',0)")
+    assert client.get(ROOT + "/customers?name_prefix=Synthetic").json()["customers"] == [
+        {"customer_id": 1, "name": "Synthetic Customer", "phone": "0501234567"}]
+    assert client.get(ROOT + "/customers?phone=0501234567").json()["customers"][0]["customer_id"] == 1
+    assert client.get(ROOT + "/customers?name_prefix=%25_").json()["customers"] == []
+    response = client.get(ROOT + "/booking-options?service_id=2&service_id=1")
+    quote = response.json()["staff"][0]["quote"]
+    assert [item["service_id"] for item in quote["items"]] == [2, 1]
+    assert quote["total_price"] == "120.00"
+    assert client.get(ROOT + "/booking-options?service_id=1&service_id=1").status_code == 422
+
+
+@pytest.mark.parametrize("amount", [79, 81])
+def test_existing_customer_reconfirms_changed_quote(client, owner, schedule_clock, http_data, amount):
+    body = booking_body(client, owner)
+    execute(http_data[0], "UPDATE services SET default_price=? WHERE id=1", (amount,))
+    response = client.post(ROOT + "/appointments", headers=owner, json=body)
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "BOOKING_QUOTE_CHANGED"
+    assert counts(http_data[0]) == (1, 1, 0, 0)
+
+
+def test_existing_customer_booking_success_and_overlap(client, owner, schedule_clock, http_data):
+    body = booking_body(client, owner)
+    assert counts(http_data[0]) == (1, 1, 0, 0)
+    result = client.post(ROOT + "/appointments", headers=owner, json=body)
+    assert result.status_code == 201, result.text
+    detail = client.get(result.headers["location"])
+    assert detail.json() == result.json() and detail.headers["etag"] == result.headers["etag"]
+    assert result.json()["total_price"] == "80.00"
+    assert client.post(ROOT + "/appointments", headers=owner, json=body).status_code == 409
+    assert counts(http_data[0]) == (1, 1, 1, 1)
+
+
+@pytest.mark.parametrize("suffix", ["/appointments", "/appointment-quotes"])
+def test_owner_post_requires_csrf(client, owner, suffix):
+    assert client.post(ROOT + suffix, headers={"Origin": owner["Origin"]}, json={}).status_code == 403
