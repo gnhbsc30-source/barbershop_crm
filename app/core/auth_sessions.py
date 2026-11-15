@@ -118,6 +118,12 @@ class InMemorySessionStore:
         with self._lock:
             return self._lookup(token)
 
+    def binding_for(self, token: str) -> str:
+        """Server-only binding to a currently live session; never a bearer token."""
+        with self._lock:
+            self._lookup(token)
+            return self._digest(token)
+
     def validate_identity(
         self, token: str, principal: Principal, credential_fingerprint: str,
     ) -> SessionContext:

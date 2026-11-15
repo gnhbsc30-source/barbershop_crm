@@ -1,13 +1,24 @@
 # Barbershop CRM — Conversation Context Archive
 # Curated recovery context, not a literal transcript of every chat message.
 
-## Current Verified Post-Merge Checkpoint — 2026-10-22
+## Current Verified Feature Checkpoint — 2026-11-13
+
+Project: /Users/aminadavyamin/Documents/Projects/barbershop_crm
+Branch: feature/stage-30b2-customer-booking-api
+Verified implementation/remediation HEAD: 6abf95ea9918df3bf7f0a58e0eaa5235266803d1
+Local and remote main: 3f66b1c37127d7cec8b0db9616cde29b163cc3ae
+Full regression: 560 passed, 0 failed. Audit-focused regression: 249 passed.
+Stage 30B.2 is implemented and audited on the feature branch. Merge is pending.
+Audit verdict: READY WITH NOTES for the local development MVP.
+Git history records the subsequent documentation-only checkpoint commit.
+
+## Historical Stage 30B.1 Post-Merge Checkpoint — 2026-10-22
 
 Project path: /Users/aminadavyamin/Documents/Projects/barbershop_crm
 Branch: main
 Verified regular Merge Commit: f714c1aea9353b7aca9bbbc052f1df429115b504
 PR #3: https://github.com/gnhbsc30-source/barbershop_crm/pull/3 (merged 2026-10-20)
-Local and remote main: f714c1aea9353b7aca9bbbc052f1df429115b504 (synchronized before this documentation commit)
+Local and remote main at the historical post-merge verification: f714c1aea9353b7aca9bbbc052f1df429115b504
 Historical implementation/remediation HEAD: 24edf454379d142d9816131a83783b4c4e93ff32
 Historical documentation/PR head: 97dc75a1db73838576e46969371a4896e57697e8
 Historical pre-merge main: 2936be4013aa2b5c6440442ce49afec8eb3effcb
@@ -16,18 +27,14 @@ Post-merge full regression on 2026-10-22: 405 passed, 0 failed.
 Historical remediation focused HTTP/launcher: 92 passed.
 All six Stage 30B.1 feature commits are ancestors of main; the two-parent merge
 tree matches the reviewed feature HEAD exactly. The working tree was clean at
-verification. Only the three context documents change in this checkpoint; consult
-Git history for its subsequent documentation-only commit SHA. Source branch
-feature/stage-30b1-auth-foundation is retained; no branches are created/deleted.
+verification. The Stage 30B.1 post-merge documentation commit is
+3f66b1c37127d7cec8b0db9616cde29b163cc3ae. Its feature branch is retained.
 
 Stage 30B.1 Local Authentication & Development Foundation is implemented, reviewed
 and verified on main after PR #3 merged with a regular merge commit. Final security audit
 found a trailing-slash redirect blocker plus approved query/header corrections.
 All three are fixed with 15 new regression cases, raising 390 tests to 405.
-Feature documentation/PR review, merge and post-merge implementation verification
-are complete, not pending. This task records the authorized post-merge checkpoint
-on main and then stops for architectural review. It does not imply production readiness.
-Stage 30B.2 is not started and requires its own approved implementation contract.
+Feature documentation, PR review, merge and post-merge verification are complete.
 
 Historical Stage 29 checkpoint:
 Stage 29 Alternative Discovery and Selection Execution is implemented, reviewed,
@@ -632,8 +639,38 @@ Limits and exclusions:
 - Local-only, single-process in-memory sessions/rate limits/selection contexts; no restart durability or multi-worker support. Production auth, HTTPS, shared atomic storage and persistent migrations remain deferred.
 - Trusted local OS/filesystem boundary; supported launcher safeguards do not certify arbitrary ASGI configurations. Cross-resource crash atomicity and retroactive revocation of in-flight authorized work are not guaranteed.
 - Non-blocking hardening: Argon2 work-factor bounds, slow-body/concurrent-request resource controls, safe unexpected-error diagnostics and additional logout/rotation race coverage. Stage 29 timezone/DST, integer settings and lazy selection-context cleanup notes remain.
-- Search ownership execution, booking/calendar HTTP APIs, frontend, cancellation/rescheduling commands and AI/Chat remain unimplemented. ANY Alternative Discovery remains unsupported. No Stage 30B.2 work has started.
+- Stage 30B.1 supplied authentication. Customer booking HTTP and search ownership arrived on the Stage 30B.2 feature branch. Owner APIs, frontend, cancellation/rescheduling, ANY Alternative Discovery and AI/Chat remain deferred.
 - Future owner edits are staff/date/time only; services, customer identity, manual price and notes changes are excluded from MVP rescheduling. Cancellation, rescheduling, owner-override and repricing rules still need approval; no new policy is inferred.
+
+## Stage 30B.2 — Customer Booking API (Merge Pending)
+
+Under /api/v1/customer: GET /services, GET /staff, POST /booking-searches,
+POST /appointments, POST /booking-searches/{search_id}/selection,
+GET /appointments and GET /appointments/{appointment_id}.
+
+Fresh CUSTOMER authorization derives business and customer scope from the session
+principal. Every POST requires session-bound CSRF. Trusted alternatives bind
+subject, tenant, customer and session before the atomic claim. TTL is 15 minutes.
+Admission allows 5 contexts/reservations per session and 128 globally, with 1
+simultaneous computation per session and 2 globally. ANY is preview-only.
+
+Exact ILS confirmation compares ordered items, prices, durations and totals.
+The booking transaction re-resolves the quote, reapplies policy and checks the
+exact interval before writing. Unsupported price types and fractional cents fail
+validation. History reads stored service names, prices and durations with scoped
+keyset pagination and a consistent, batched read.
+
+Final audit fixed three defects: response preparation after commit, post-commit
+cleanup masking successful booking, and coercion of numeric-looking stored BLOB
+prices. The complete 201 response is now rendered before commit. Cleanup failures
+preserve success and replay protection. There is no cross-resource crash atomicity
+or guarantee of response delivery after commit. Five new regression cases brought
+the full suite from 555 to 560 passing tests.
+
+ADR-042 through ADR-044 record the approved decisions. Local-only, single-process
+state, lazy expiration, and the Asia/Jerusalem naive scheduling clock prerequisite
+remain. No schema migration, frontend, owner calendar, cancellation, rescheduling
+or AI/Chat was added.
 
 ## Important Technical Definitions
 
@@ -660,16 +697,10 @@ one isolated business/customer organization inside the SaaS.
 
 ## Current Next Step
 
-The old Appointment Service design and Stage 29 post-merge checkpoint instructions
-are historical and complete. Stage 30B.1 is now merged and post-merge verified.
-
-1. Complete the authorized three-document post-merge checkpoint commit/push to main, then stop for architectural review.
-2. The Stage 30B.1 PR/merge/verification workflow is complete; no pending merge approval or PR creation remains. Retain the feature branch; create/delete no branches and start no new feature work.
-3. Intended Stage 30B.2 direction is authenticated booking/discovery/selection HTTP boundaries reusing existing domain services, including trusted customer/tenant and search-context ownership. Exact endpoint/slice contracts still require review and approval. No implementation starts automatically.
-
-Future customer/owner interfaces must use the same real backend and development DB.
-Owner calendar/create/cancel/reschedule and frontend are future milestones, not
-implemented authentication features. AI/Chat remains excluded. No production-readiness claim.
+Review the Stage 30B.2 pull request and await explicit merge approval.
+Post-merge verification follows a separately approved merge. Stage 30B.3 has
+not started. Future owner editing is limited to staff/date/time; lifecycle,
+owner overrides and repricing policies still require approval.
 
 ## Context Safety Rule
 

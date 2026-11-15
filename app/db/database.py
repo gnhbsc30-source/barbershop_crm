@@ -67,6 +67,16 @@ def open_development_database(path: Path, *, create: bool = False) -> sqlite3.Co
 
 
 @contextmanager
+def read_snapshot(connection: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """Keep related SELECTs consistent; never commit writes from a read workflow."""
+    connection.execute("BEGIN")
+    try:
+        yield connection
+    finally:
+        connection.rollback()
+
+
+@contextmanager
 def transaction(connection: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     """Provide one short write transaction for an application service.
 

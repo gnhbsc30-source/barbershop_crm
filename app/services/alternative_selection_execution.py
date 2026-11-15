@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
+
 from app.services.alternative_selection import (
     AlternativeSelectionContextStore,
     AlternativeSelectionError,
@@ -9,6 +12,7 @@ from app.services.appointments import (
     AppointmentBookingResult,
     AppointmentService,
 )
+from app.services.booking_confirmation import BookingConfirmation
 
 
 class AlternativeSelectionService:
@@ -42,6 +46,8 @@ class AlternativeSelectionService:
         option_id: str,
         customer_id: int,
         notes: str | None = None,
+        confirmation: BookingConfirmation | None = None,
+        before_commit: Callable[[AppointmentBookingResult], None] | None = None,
     ) -> AppointmentBookingResult:
         """Resolve trusted selection data and book it with fresh validation."""
         selection = self._selection_context_store.claim_selection(
@@ -57,6 +63,8 @@ class AlternativeSelectionService:
                 service_ids=list(selection.requested_service_ids),
                 staff_selection={"type": "SPECIFIC", "staff_id": selection.staff_id},
                 notes=notes,
+                **({"confirmation": confirmation} if confirmation is not None else {}),
+                **({"before_commit": before_commit} if before_commit is not None else {}),
             )
         except AppointmentBookingError as error:
             self._selection_context_store.release_selection_claim(search_id)
@@ -69,5 +77,9 @@ class AlternativeSelectionService:
             self._selection_context_store.release_selection_claim(search_id)
             raise
 
-        self._selection_context_store.expire_search_context(search_id)
+        try:
+            self._selection_context_store.expire_search_context(search_id)
+        except Exception:
+            # The booking is durable. Keep the claim closed if cleanup fails.
+            logging.getLogger(__name__).error("Could not expire a committed booking search")
         return result

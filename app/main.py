@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.api.auth import AUTH_EXCEPTION_HANDLERS, router as auth_router
 from app.api.auth_dependencies import authentication_lifespan
+from app.api.customer_booking import router as customer_router
 from app.core.local_security import LoopbackSecurityMiddleware
 
 
@@ -15,6 +16,7 @@ app = FastAPI(
 )
 app.add_middleware(LoopbackSecurityMiddleware)
 app.include_router(auth_router)
+app.include_router(customer_router)
 
 
 @app.get("/health")

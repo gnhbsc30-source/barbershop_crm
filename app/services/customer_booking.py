@@ -1,0 +1,163 @@
+"""Customer application orchestration, reusing deterministic domain services."""
+
+from app.db import repositories
+from app.services.appointments import AppointmentBookingError, AppointmentService, ResolvedAppointmentItem
+from app.db.database import read_snapshot
+from app.services.availability import AvailabilityEngine
+from app.services.booking_confirmation import BookingConfirmation, format_cents, real_to_cents
+from app.services.alternatives import AlternativeDiscoveryService
+from app.services.alternative_selection_execution import AlternativeSelectionService
+import logging
+from datetime import datetime
+from dataclasses import asdict
+
+
+def item_summary(items):
+    terms = BookingConfirmation.from_items(items)
+    return {
+        "items": [{"service_id": item.service_id, "service_name": item.service_name,
+                   "duration_minutes": item.duration_minutes, "price": format_cents(term.price_cents)}
+                  for item, term in zip(items, terms.items)],
+        "total_duration_minutes": terms.total_duration_minutes,
+        "total_price": format_cents(terms.total_price_cents), "currency": "ILS",
+    }
+
+
+class CustomerBooking:
+    def __init__(self, connection, principal):
+        self.connection = connection
+        self.principal = principal
+        self.business_id = principal.business_id
+        self.appointments = AppointmentService(connection)
+
+    def services(self):
+        return {"services": [
+            {"service_id": row["id"], "name": row["name"], "description": row["description"],
+             "default_duration_minutes": row["default_duration_minutes"],
+             "default_price": format_cents(real_to_cents(row["default_price"]))}
+            for row in repositories.list_active_services(self.connection, self.business_id)
+        ]}
+
+    def validate_services(self, service_ids):
+        if len(repositories.get_services_by_ids(self.connection, self.business_id, service_ids)) != len(service_ids):
+            raise AppointmentBookingError("SERVICE_NOT_FOUND")
+
+    def staff(self, service_ids):
+        with read_snapshot(self.connection):
+            self.validate_services(service_ids)
+            staff = AvailabilityEngine(self.connection).get_eligible_staff(self.business_id, service_ids)
+            return {"service_ids": service_ids, "staff": [
+                {"staff_id": row["id"], "staff_name": row["name"], **item_summary(
+                    self.appointments.resolve_staff_services(business_id=self.business_id, staff_id=row["id"], service_ids=service_ids))}
+                for row in staff
+            ]}
+
+    def search(self, data, owner, contexts, ownership):
+        with ownership.computation(owner, data.include_alternatives) as ticket, read_snapshot(self.connection):
+            self.validate_services(data.service_ids)
+            start = datetime.fromisoformat(data.start_datetime)
+            self.appointments.validate_booking_policy(business_id=self.business_id, requested_start=start)
+            selection = data.staff_selection.model_dump()
+            if selection["type"] == "SPECIFIC":
+                staff = repositories.get_staff(self.connection, self.business_id, selection["staff_id"])
+                if staff is None:
+                    raise AppointmentBookingError("STAFF_NOT_FOUND")
+                if not staff["is_active"]:
+                    raise AppointmentBookingError("STAFF_INACTIVE")
+            availability = AvailabilityEngine(self.connection).check(self.business_id, data.service_ids, data.start_datetime, selection)
+            quote = None
+            if availability.available:
+                quote = self.slot_quote(availability.staff_id, availability.start_datetime, availability.end_datetime, data.service_ids)
+            result = {"business_timezone": "Asia/Jerusalem", "requested_availability": {
+                "available": availability.available, "reason": availability.reason, "quote": quote}, "alternatives": None}
+            if availability.available or not data.include_alternatives:
+                return result
+            search_id = None
+            published = False
+            try:
+                discovery = AlternativeDiscoveryService(self.connection, contexts).discover(
+                    business_id=self.business_id, requested_staff_id=selection["staff_id"],
+                    requested_start_datetime=start, requested_service_ids=data.service_ids)
+                search_id = discovery.search_id
+                options = []
+                for option in discovery.result.alternatives:
+                    value = asdict(option)
+                    value.update(item_summary(option.items))
+                    value["start_datetime"] = option.start_datetime.isoformat()
+                    value["end_datetime"] = option.end_datetime.isoformat()
+                    options.append(value)
+                expires = ownership.publish(ticket, search_id) if search_id else None
+                result["alternatives"] = {"search_id": search_id, "expires_at": expires.isoformat() if expires else None,
+                                          "options": options, "total_available": discovery.result.total_available,
+                                          "has_more": discovery.result.has_more}
+                published = True
+                return result
+            finally:
+                if search_id and not published:
+                    contexts.expire_search_context(search_id)
+
+    def slot_quote(self, staff_id, start, end, service_ids):
+        staff = repositories.get_staff(self.connection, self.business_id, staff_id)
+        items = self.appointments.resolve_staff_services(business_id=self.business_id, staff_id=staff_id, service_ids=service_ids)
+        return {"staff_id": staff_id, "staff_name": staff["name"], "start_datetime": start, "end_datetime": end,
+                **item_summary(items)}
+
+    def booked_response(self, result, notes):
+        staff = repositories.get_staff(self.connection, self.business_id, result.staff_id)
+        return {"appointment_id": result.appointment_id, "staff_id": result.staff_id, "staff_name": staff["name"],
+                "start_datetime": result.start_datetime, "end_datetime": result.end_datetime,
+                "status": "BOOKED", "notes": notes, **item_summary(result.items)}
+
+    def book(self, data, prepare_response):
+        response = None
+
+        def before_commit(result):
+            nonlocal response
+            response = prepare_response(self.booked_response(result, data.notes))
+
+        self.appointments.book(
+            business_id=self.business_id, customer_id=self.principal.customer_id,
+            service_ids=data.service_ids, staff_selection=data.staff_selection.model_dump(),
+            start_datetime=data.start_datetime, notes=data.notes, confirmation=data.confirmation.domain(),
+            before_commit=before_commit)
+        return response
+
+    def select(self, search_id, data, owner, contexts, ownership, prepare_response):
+        ownership.authorize(search_id, owner)
+        response = None
+
+        def before_commit(result):
+            nonlocal response
+            response = prepare_response(self.booked_response(result, data.notes))
+
+        AlternativeSelectionService(contexts, self.appointments).book_selected_alternative(
+            search_id=search_id, option_id=data.option_id, customer_id=self.principal.customer_id,
+            notes=data.notes, confirmation=data.confirmation.domain(), before_commit=before_commit)
+        try:
+            ownership.consumed(search_id, owner)
+        except Exception:
+            # Selection execution has already expired the context or kept it claimed.
+            logging.getLogger(__name__).error("Could not remove ownership for a committed booking search")
+        return response
+
+    def history(self, *, limit=20, before_id=None, status=None, appointment_id=None):
+        with read_snapshot(self.connection):
+            rows = repositories.get_customer_appointment_rows(
+                self.connection, self.business_id, self.principal.customer_id,
+                limit=limit + 1, before_id=before_id, status=status, appointment_id=appointment_id)
+            if appointment_id is not None and not rows:
+                raise AppointmentBookingError("APPOINTMENT_NOT_FOUND")
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+            items = repositories.get_customer_appointment_items(
+                self.connection, self.business_id, self.principal.customer_id,
+                [row["appointment_id"] for row in rows])
+            grouped = {row["appointment_id"]: [] for row in rows}
+            for item in items:
+                grouped[item["appointment_id"]].append(ResolvedAppointmentItem(
+                    item["service_id"], item["service_name"], item["duration_minutes"], item["price"]))
+            values = [{**row, **item_summary(grouped[row["appointment_id"]])} for row in rows]
+            if appointment_id is not None:
+                return values[0]
+            return {"appointments": values, "has_more": has_more,
+                    "next_before_id": rows[-1]["appointment_id"] if has_more else None}

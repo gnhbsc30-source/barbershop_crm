@@ -2,11 +2,11 @@
 
 This file records decisions that should survive conversation changes.
 
-Current post-merge checkpoint (2026-10-22): Stage 30B.1 is implemented, reviewed,
+Historical post-merge checkpoint (2026-10-22): Stage 30B.1 is implemented, reviewed,
 merged into `main` through [PR #3](https://github.com/gnhbsc30-source/barbershop_crm/pull/3),
 and verified. Regular Merge Commit `f714c1aea9353b7aca9bbbc052f1df429115b504`
 preserves all six feature commits; post-merge full regression **405 passed, 0 failed**.
-Local/remote main were synchronized and clean before this documentation update.
+Local/remote main were synchronized and clean at Stage 30B.1 verification.
 Historical implementation/remediation HEAD: `24edf454379d142d9816131a83783b4c4e93ff32`;
 reviewed documentation/PR head: `97dc75a1db73838576e46969371a4896e57697e8`;
 source branch `feature/stage-30b1-auth-foundation` is retained. Pre-merge main:
@@ -17,7 +17,10 @@ Stage 29 was merged via [PR #2](https://github.com/gnhbsc30-source/barbershop_cr
 regular Merge Commit `d6b4866461bab2ea13dd8a001b3101136110c26a`, verified with 167 tests.
 Its historical audit/implementation facts remain in ADR-027 through ADR-034.
 ADR-035 onward records Stage 30 decisions, without changing scheduling contracts.
-Stage 30B.2 is not started; the next implementation contract requires approval.
+Current feature checkpoint (2026-11-13): Stage 30B.2 is implemented and audited on
+`feature/stage-30b2-customer-booking-api` at implementation HEAD
+`6abf95ea9918df3bf7f0a58e0eaa5235266803d1`. Full regression **560 passed, 0 failed**.
+`main` remains at `3f66b1c37127d7cec8b0db9616cde29b163cc3ae`. Merge is pending architectural approval.
 
 ## ADR-001 — Database Is the Source of Truth
 
@@ -595,9 +598,35 @@ No Stage 29 API routes, UI, Chat, or AI selection execution integration exists. 
 
 **Decision:** The approved future owner-editing/rescheduling boundary allows changing staff, date and time only. Services, customer identity, manual prices and notes are excluded from MVP rescheduling.
 
-**Status:** Scope decision only, not implemented by Stage 30B.1. Both future customer/owner interfaces must share the real backend/development DB. Cancellation cutoffs, rescheduling/status-transition policy, owner overrides and repricing remain undecided; this ADR does not approve those policies or infer a cancellation/rescheduling command implementation.
+**Status:** Approved future scope. Owner modification remains deferred. Both future customer/owner interfaces must share the real backend/development DB. Cancellation cutoffs, rescheduling/status-transition policy, owner overrides and repricing remain undecided; this ADR does not approve those policies or infer a cancellation/rescheduling command implementation.
 
-**Next:** Stage 30B.1 merge and post-merge verification are complete. Stage 30B.2 is intended to address the authenticated business API boundary in separate reviewable slices; exact contracts need approval. Do not start it automatically. This checkpoint changes no architectural decision or undecided business policy.
+---
+
+## ADR-042 — Customer Booking Authorization and Search Ownership
+
+**Decision:** Customer catalog, search, booking, selection and history require a freshly validated CUSTOMER principal. Tenant and customer scope come from that principal. Every POST requires session-bound CSRF and the Stage 30B.1 loopback, Host, Origin and cookie controls.
+
+- Alternative ownership binds subject, tenant, customer and session before the Stage 29 atomic claim. Unknown, foreign and expired searches share the same HTTP 410 response.
+- Context TTL is exactly 15 minutes. Admission allows five live contexts or reservations per session and 128 globally, with one concurrent computation per session and two globally. Failure cleanup releases capacity. Admission preserves valid claimed contexts.
+- SPECIFIC supports discovery and final booking. ANY supports preview only. Scheduling retains naive business-local datetimes and requires the Asia/Jerusalem clock.
+
+---
+
+## ADR-043 — Exact ILS Confirmation Uses the Booking Transaction
+
+**Decision:** HTTP booking requires exact confirmation of ordered service items, per-item price and duration, totals, and ILS. Convert supported stored numerics with `Decimal(str(value))`, reject invalid types, non-finite/negative prices and fractional cents, and sum integer cents. The wire format is a two-decimal string.
+
+- AppointmentService re-resolves staff and services inside the existing write transaction. A changed confirmation fails before inserts. Fresh policy and final availability checks use the exact persisted interval and item snapshots. Legacy domain callers can omit confirmation.
+- Customer history is tenant/customer scoped and uses keyset pagination and batched item reads under a consistent snapshot. It displays booked service names, prices and durations independently of later catalog changes.
+
+---
+
+## ADR-044 — Prepare Booking Responses Before Commit
+
+**Decision:** Direct and alternative booking prepare and render HTTP 201 and Location within the existing write transaction. A preparation error rolls back the appointment and its items. Controllers supply response preparation; transaction ownership remains with AppointmentService.
+
+- After a successful commit, context expiration and ownership removal are best-effort. Errors are logged generically and preserve the successful response. If expiry fails, the claim remains closed and replay stays blocked.
+- The supported deployment remains local and single-process. Expiry cleanup is lazy, process restart loses in-memory state, and response delivery after commit can be interrupted. Shared atomic storage, cross-resource crash atomicity, production identity/HTTPS, schema migrations and timezone/DST hardening remain deferred.
 
 ---
 

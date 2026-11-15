@@ -11,11 +11,14 @@ from app.core.auth_rate_limit import AuthenticationRateLimiter
 from app.core.auth_sessions import InMemorySessionStore, SessionContext, SessionError
 from app.core.config import settings
 from app.core.local_security import validate_local_startup
+from app.core.booking_search_ownership import BookingSearchOwnership
 from app.db import database
 from app.services.authentication import (
     AuthenticationError, PrincipalRole, authenticate_access_code_with_fingerprint,
     resolve_identity_with_fingerprint,
 )
+from app.services.alternative_selection import InMemoryAlternativeSelectionContextStore
+from datetime import datetime, timezone
 
 
 SESSION_COOKIE = "barbershop_dev_session"
@@ -38,10 +41,12 @@ async def authentication_lifespan(app):
     app.state.auth_identities = MappingProxyType(identities)
     app.state.auth_sessions = InMemorySessionStore()
     app.state.auth_limiter = AuthenticationRateLimiter()
+    app.state.booking_contexts = InMemoryAlternativeSelectionContextStore(lambda: datetime.now(timezone.utc))
+    app.state.booking_searches = BookingSearchOwnership(app.state.booking_contexts)
     try:
         yield
     finally:
-        for attribute in ("auth_database_path", "auth_identities", "auth_sessions", "auth_limiter"):
+        for attribute in ("auth_database_path", "auth_identities", "auth_sessions", "auth_limiter", "booking_contexts", "booking_searches"):
             delattr(app.state, attribute)
 
 

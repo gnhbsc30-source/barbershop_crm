@@ -5,13 +5,13 @@
 
 ## 1. Current Phase
 
-**Phase:** Two-sided local development MVP → Authentication and development-data foundation
+**Phase:** Two-sided local development MVP → Customer Booking API
 
-**Current milestone:** Stage 30B.1 — Local Authentication & Development Foundation implemented, reviewed, merged into `main` through [PR #3](https://github.com/gnhbsc30-source/barbershop_crm/pull/3), and post-merge verified. Regular Merge Commit: `f714c1aea9353b7aca9bbbc052f1df429115b504`.
+**Current milestone:** Stage 30B.2 — Customer Booking API is implemented, audited and approved for pull request review on the feature branch. Merge into `main` remains pending.
 
-**Audit checkpoint:** The final Stage 30B.1 audit found an authentication redirect blocker. Approved remediation also corrected reusable query-validation boundaries and protocol-header preservation. All three corrections were implemented/tested before PR #3; the reviewed history is preserved on `main`. Post-merge regression: 405 passed, 0 failed. This is not production readiness.
+**Audit checkpoint:** Booking response preparation, post-commit selection cleanup and unsupported stored price types were corrected. Full regression: **560 passed, 0 failed**. Audit verdict: **READY WITH NOTES** for the local development MVP.
 
-**Next steps:** Architectural review of this completed post-merge checkpoint. Stage 30B.2 has not started; its implementation requires a separate approved contract.
+**Next steps:** Review the Stage 30B.2 pull request and obtain explicit merge approval. Post-merge verification is a separate checkpoint.
 
 **STOP RULE:** Do not start the next milestone until the current milestone is explicitly considered complete and the user agrees to continue.
 
@@ -31,26 +31,25 @@ Physically present directories containing tracked files:
 - `docs/`
 - `tests/`
 
-Tracked application entry point: `app/main.py` (thin FastAPI composition root, authentication lifespan/router/middleware, and `/health`). Development tools are `app/dev_data.py` and `app/dev_server.py`.
+Tracked application entry point: `app/main.py` (thin FastAPI composition root, authentication lifespan, auth and customer routers, middleware, and `/health`). Development tools are `app/dev_data.py` and `app/dev_server.py`.
 
 Planned structure only; these folders are currently absent and are not tracked:
 - `app/ai/`
 - `frontend/admin/`, `frontend/customer/`
 - `knowledge/`, `scripts/`
 
-The planned folders do not represent implemented features. `app/api/` now contains only development authentication routes/dependencies; no booking or owner-calendar HTTP API exists.
+The planned folders do not represent implemented features. `app/api/` contains development authentication and the Customer Booking API on this feature branch. The owner calendar API remains deferred.
 
-Latest known test result:
-- **23 Availability Engine tests passed**
-- **405 tests passed, 0 failed — full post-merge regression suite** on `main` at `f714c1aea9353b7aca9bbbc052f1df429115b504`, verified 2026-10-22.
-- **92 focused HTTP/launcher tests passed** during remediation verification.
-- No regression detected in the previously green tests.
-- Tests cover the existing Customer/scheduling/booking/discovery/selection domains plus identity/credentials, sessions, rate limiting, provisioning/rotation, ASGI authentication/security, and launcher guards. Tests use isolated temporary databases; verification does not provision live credentials or start a real development server.
+Latest verified results:
+- **560 tests passed, 0 failed** in the full feature regression on 2026-11-13.
+- **249 focused tests passed** at the audit remediation checkpoint.
+- Tests use isolated temporary databases and cover concurrent booking and selection, transactional rollback, tenant isolation, exact money, and Stage 27–30B.1 regressions.
 
 Git checkpoint:
-- Checkpoint date: 2026-10-22
-- Branch: `main`
-- Verified Stage 30B.1 merge / synchronized local and remote `main` before this documentation commit: `f714c1aea9353b7aca9bbbc052f1df429115b504`. PR #3 merged on 2026-10-20 using a regular two-parent merge, not squash/rebase.
+- Feature branch: `feature/stage-30b2-customer-booking-api`
+- Verified implementation/remediation HEAD before the documentation commit: `6abf95ea9918df3bf7f0a58e0eaa5235266803d1`
+- Verified local and remote `main`: `3f66b1c37127d7cec8b0db9616cde29b163cc3ae` (Stage 30B.1 post-merge documentation checkpoint).
+- Historical Stage 30B.1 merge: `f714c1aea9353b7aca9bbbc052f1df429115b504`, [PR #3](https://github.com/gnhbsc30-source/barbershop_crm/pull/3), regular merge with **405 passed, 0 failed** post-merge on 2026-10-22.
 - Historical implementation/remediation HEAD: `24edf454379d142d9816131a83783b4c4e93ff32`; documentation/PR head: `97dc75a1db73838576e46969371a4896e57697e8`; source branch: `feature/stage-30b1-auth-foundation` (retained). All six feature commits are ancestors of `main`; the merge tree exactly matches the reviewed PR head.
 - Historical pre-merge `main`: `2936be4013aa2b5c6440442ce49afec8eb3effcb` (Stage 29 final documentation checkpoint).
 - Stage 29 historical merge: `d6b4866461bab2ea13dd8a001b3101136110c26a`, PR #2: https://github.com/gnhbsc30-source/barbershop_crm/pull/2; post-merge verification was **167 passed, 0 failed**.
@@ -58,7 +57,7 @@ Git checkpoint:
 - Historical implementation HEAD: `6091baf8caea0aa005bba4e7271b285368da162d`; reviewed documentation/PR head: `47bdcea7f9fcf90832264ed652d35bb88d682a5f`.
 - Historical pre-merge `main`: `5846451000e8dc2ef75cb9605c63613295ef353e` (Stage 28 baseline plus documentation).
 - GitHub: https://github.com/gnhbsc30-source/barbershop_crm
-- Working tree was clean at post-merge verification. Only the three checkpoint documents are updated by this task; use Git history for the subsequent documentation commit SHA. The merge SHA identifies the verified implementation checkpoint, not the later documentation-only HEAD.
+- The feature working tree was clean and synchronized at implementation verification. Use Git history for the subsequent documentation-only commit SHA.
 
 ## 3. What Has Been Completed
 
@@ -230,18 +229,39 @@ Six preserved feature commits (oldest first):
 
 PR #3 merged at `f714c1aea9353b7aca9bbbc052f1df429115b504`. Post-merge verification on 2026-10-22 confirmed both parents, all six feature ancestors, an unchanged reviewed feature tree, and 405 passing tests. No tracked runtime database, provisioning manifest or credential files were found; the tracked-source secret-pattern scan found no obvious credential literals.
 
-Stage 30B.1 makes no schema or Stage 27–29 scheduling changes. No booking/calendar HTTP API, frontend, search-context ownership execution, cancellation/rescheduling command, or AI/Chat integration is implemented. Stage 30B.2 is not started.
+Stage 30B.1 made no schema or Stage 27–29 scheduling changes. Customer booking HTTP and search ownership arrived in Stage 30B.2.
+
+### Stage 30B.2 — Customer Booking API (feature branch, merge pending)
+
+All routes below are under `/api/v1/customer`.
+
+| Endpoint | Capability |
+| --- | --- |
+| `GET /services` | Active services for the authenticated business |
+| `GET /staff?service_id=…` | Eligible staff and ordered service quotes |
+| `POST /booking-searches` | Availability preview and optional SPECIFIC-staff alternatives |
+| `POST /appointments` | Direct, explicitly confirmed SPECIFIC-staff booking |
+| `POST /booking-searches/{search_id}/selection` | Booking from a trusted alternative |
+| `GET /appointments` | Customer history with bounded keyset pagination and optional status filter |
+| `GET /appointments/{appointment_id}` | Customer-scoped appointment detail |
+
+- Every route revalidates CUSTOMER identity. The principal supplies tenant and customer scope. Every POST requires session-bound CSRF under the existing local Host/Origin and cookie protections.
+- Confirmation compares ordered services, item prices and durations, totals, and ILS exactly. Valid stored numeric prices use `Decimal(str(value))` and integer cents. HTTP uses two-decimal strings. Unsupported types and precision fail without rounding. Any quote change requires renewed confirmation.
+- Direct and alternative bookings go through AppointmentService. Inside the existing write transaction, it re-resolves configuration, compares confirmation before inserts, reapplies policy, checks the exact interval for availability, and writes the appointment and items atomically. Existing callers may omit confirmation.
+- Search ownership binds subject, business, customer and session before the Stage 29 atomic claim. Context TTL is 15 minutes. Limits are five live contexts or reservations per session and 128 globally, with one concurrent computation per session and two globally. Admission preserves valid claimed contexts. ANY is preview-only.
+- History reads stored booked service names, prices and durations in a consistent snapshot. Catalog changes leave those booked item snapshots intact.
+- Both booking paths prepare and render the HTTP 201 response and Location inside the write transaction. A preparation failure rolls back. After commit, alternative cleanup failures are logged generically and success is preserved. Failed context expiry leaves the claim closed; cleanup is lazy and has no cross-resource crash atomicity. Delivery after commit can still be interrupted.
 
 ### Deferred capabilities and production limitations
 - SQLite remains temporary; no production DB migration or persistent migration infrastructure. Schema changes do not upgrade existing databases automatically.
 - In-memory selection storage/claims are single-process and require the same store instance. Multi-worker deployment needs shared atomic storage; there is no restart durability or atomic transaction spanning booking and context consumption.
-- Business-local timezone/DST hardening remains future work. Rejecting aware input is not timezone conversion/support.
+- Scheduling uses naive business-local datetimes and requires an Asia/Jerusalem scheduling clock. Timezone conversion and DST hardening remain deferred.
 - Settings integer-type enforcement needs hardening: SQLite affinity plus `> 0` checks can still accept fractional/text values.
-- Expired-context memory cleanup is lazy. Discovery is unpaginated and has no production resource/capacity controls.
-- Development authentication/role/tenant dependencies now exist on `main`; resource-specific authorization and search-context ownership execution remain application-boundary work. Opaque search IDs do not authorize users.
+- Expired-context memory cleanup is lazy. Discovery is unpaginated. The local admission limits bound search counts and concurrent computations; production resource hardening remains deferred.
+- Development authentication is on `main`. Customer resource authorization and session-bound search ownership are implemented on the Stage 30B.2 branch.
 - Sessions/rate limits and selection contexts are single-process, non-durable state; restart loses state. Production/shared atomic storage, HTTPS/secure-cookie deployment and production identity management remain deferred. The supported local launcher, not arbitrary ASGI invocation, is the deployment contract.
 - Stored Argon2 work-factor bounds, slow-body/concurrent-request resource hardening, safe unexpected-error diagnostics, and additional logout/rotation races remain non-blocking hardening notes. No retroactive cancellation of already-authorized in-flight requests is guaranteed.
-- ANY Alternative Discovery, cancellation/rescheduling execution, booking/calendar HTTP APIs, frontend and AI/Chat integration are not implemented. Existing Availability ANY behavior is separate; the three development auth routes are implemented.
+- Deferred capabilities include ANY Alternative Discovery, owner calendar and management APIs, cancellation/rescheduling execution, frontend and AI/Chat.
 
 ## 4. Important Architecture Decisions
 
@@ -398,12 +418,8 @@ Still unresolved unless explicitly changed later:
 - timezone handling strategy for all scheduling flows
 - cancellation cutoffs/status transitions, rescheduling policy, owner overrides and final repricing behavior
 
-## 10. Post-Merge Checkpoint and Next Milestone
+## 10. Pull Request Review Gate
 
-Stage 30B.1 is implemented, reviewed, merged through PR #3 using regular Merge Commit `f714c1aea9353b7aca9bbbc052f1df429115b504`, and verified on `main` with 405 passing tests. The historical Stage 29 checkpoint and all six Stage 30B.1 feature commits remain in main history.
+Stage 30B.2 is ready for architectural merge review once its PR is open. The feature branch contains the implementation and audit remediation. The merge and post-merge verification require separate approval.
 
-1. Complete the authorized documentation-only post-merge commit/push to `main`, then stop for architectural review.
-2. PR creation, merge approval, merge and post-merge implementation verification are completed, not pending. No branch creation/deletion or further feature work is authorized by this checkpoint.
-3. Intended Stage 30B.2 direction: authenticated booking/discovery/selection HTTP boundaries over the existing domain services, including trusted tenant/customer and search-context ownership. The precise endpoint/slice contract still needs review and approval; no Stage 30B.2 implementation is authorized here.
-
-Future customer and owner interfaces must use the same real backend and development DB. Owner calendar/create/cancel/reschedule capabilities remain future work, not part of authentication. No frontend or AI/Chat is implemented. This completed Stage 30B.1 checkpoint does not authorize Stage 30B.2 or production deployment.
+Future customer and owner interfaces share the real backend and development database. Owner editing is scoped to staff/date/time only. Owner calendar, cancellation, rescheduling, frontend and AI/Chat remain deferred. Stage 30B.3 has no implementation approval in this checkpoint.

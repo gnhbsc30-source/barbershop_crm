@@ -171,6 +171,8 @@ def test_selection_inputs_cannot_override_trusted_booking_values():
         "option_id",
         "customer_id",
         "notes",
+        "confirmation",  # Comparison-only precondition; no trusted selection overrides.
+        "before_commit",  # Internal response preparation hook.
     }
 
 
