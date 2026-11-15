@@ -736,3 +736,47 @@ def get_business_settings(
     ).fetchone()
 
     return dict(row) if row else None
+
+
+def get_owner_appointment_rows(connection, business_id, *, limit=1, appointment_id=None,
+                               start=None, end=None, staff_id=None, after=None):
+    query = """
+        SELECT a.id AS appointment_id, a.staff_id, s.name AS staff_name,
+               a.customer_id, c.name AS customer_name, a.start_datetime,
+               a.end_datetime, a.status
+        """
+    if appointment_id is not None:
+        query += ", a.notes, a.updated_at, c.phone AS customer_phone"
+    query += """
+        FROM appointments AS a
+        JOIN staff AS s ON s.business_id = a.business_id AND s.id = a.staff_id
+        JOIN customers AS c ON c.business_id = a.business_id AND c.id = a.customer_id
+        WHERE a.business_id = ?
+        """
+    parameters = [business_id]
+    if appointment_id is not None:
+        query += " AND a.id = ?"
+        parameters.append(appointment_id)
+    else:
+        query += " AND a.start_datetime < ? AND a.end_datetime > ?"
+        parameters.extend((end, start))
+        if staff_id is not None:
+            query += " AND a.staff_id = ?"
+            parameters.append(staff_id)
+        if after is not None:
+            query += " AND (a.start_datetime, a.id) > (?, ?)"
+            parameters.extend(after)
+    query += " ORDER BY a.start_datetime, a.id LIMIT ?"
+    return [dict(row) for row in connection.execute(query, [*parameters, limit])]
+
+
+def get_owner_appointment_items(connection, business_id, appointment_ids):
+    if not appointment_ids:
+        return []
+    placeholders = ",".join("?" for _ in appointment_ids)
+    return [dict(row) for row in connection.execute(
+        f"""SELECT i.appointment_id, i.service_id, i.service_name, i.duration_minutes, i.price
+            FROM appointment_items AS i
+            JOIN appointments AS a ON a.business_id = i.business_id AND a.id = i.appointment_id
+            WHERE a.business_id = ? AND a.id IN ({placeholders})
+            ORDER BY i.appointment_id, i.id""", [business_id, *appointment_ids])]
