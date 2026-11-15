@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import re
 
 from app.db import repositories
 from app.db.database import read_snapshot, transaction
@@ -188,6 +189,6 @@ def parse_revision(value):
         revision = datetime.fromisoformat(value)
     except (ValueError, TypeError):
         raise BookingConfigurationError() from None
-    if revision.tzinfo is not None or " " not in value and "T" not in value:
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?", value) is None:
         raise BookingConfigurationError()
     return revision

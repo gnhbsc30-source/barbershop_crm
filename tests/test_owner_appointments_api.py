@@ -326,3 +326,138 @@ def test_edit_response_failure_rolls_back_schedule_and_revision(client, owner, b
     detail = client.get(booked_owner.headers["location"])
     assert detail.json() == booked_owner.json()
     assert detail.headers["etag"] == booked_owner.headers["etag"]
+
+
+def concurrently(*operations):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    ready = Barrier(len(operations))
+
+    def run(operation):
+        ready.wait(timeout=5)
+        return operation()
+
+    with ThreadPoolExecutor(max_workers=len(operations)) as pool:
+        return list(pool.map(run, operations))
+
+
+def test_concurrent_guest_phone_check_serializes_across_distinct_slots(client, owner, schedule_clock, http_data):
+    guest = {"type": "NEW", "name": "Walk-in", "phone": "0501234567"}
+    first = booking_body(client, owner, customer=guest)
+    second = booking_body(client, owner, slot={**SLOT, "staff_id": 2}, customer=guest)
+
+    def book(body):
+        return client.post(ROOT + "/appointments", headers=owner, json=body)
+
+    results = concurrently(lambda: book(first), lambda: book(second))
+    assert sorted(result.status_code for result in results) == [201, 409]
+    assert next(result.json() for result in results if result.status_code == 409) == {
+        "error": {"code": "CUSTOMER_PHONE_ALREADY_EXISTS"}}
+    assert counts(http_data[0]) == (2, 1, 1, 1)
+
+
+def test_concurrent_owner_booking_has_one_winner(client, owner, schedule_clock, http_data):
+    body = booking_body(client, owner)
+
+    def book():
+        return client.post(ROOT + "/appointments", headers=owner, json=body)
+
+    assert sorted(result.status_code for result in concurrently(book, book)) == [201, 409]
+    assert counts(http_data[0]) == (1, 1, 1, 1)
+
+
+def test_concurrent_edits_from_one_revision_have_one_winner(client, owner, booked_owner):
+    results = concurrently(
+        lambda: move(client, booked_owner, owner, {"staff_id": 2}),
+        lambda: move(client, booked_owner, owner, {"start_datetime": "2027-01-04T12:00:00"}),
+    )
+    assert sorted(result.status_code for result in results) == [200, 412]
+    winner = next(result for result in results if result.status_code == 200)
+    assert client.get(booked_owner.headers["location"]).headers["etag"] == winner.headers["etag"]
+
+
+def test_competing_booking_and_edit_do_not_overlap(client, owner, booked_owner, http_data):
+    body = booking_body(client, owner, slot={**SLOT, "staff_id": 2})
+    booking, edit = concurrently(
+        lambda: client.post(ROOT + "/appointments", headers=owner, json=body),
+        lambda: move(client, booked_owner, owner, {"staff_id": 2}),
+    )
+    assert (booking.status_code, edit.status_code) in {(201, 409), (409, 200)}
+    with closing(database.open_development_database(http_data[0])) as connection:
+        assert connection.execute("SELECT count(*) FROM appointments WHERE staff_id=2").fetchone()[0] == 1
+
+
+def test_foreign_customer_id_cannot_book_and_guest_phone_is_tenant_scoped(client, owner, schedule_clock, http_data):
+    path = http_data[0]
+    execute(path, "INSERT INTO businesses(id,business_name) VALUES (2,'Foreign')")
+    execute(path, "INSERT INTO customers(id,business_id,name,phone,customer_type) VALUES (9,2,'Foreign','0501234567','GUEST')")
+    body = booking_body(client, owner, customer={"type": "EXISTING", "customer_id": 9})
+    assert client.post(ROOT + "/appointments", headers=owner, json=body).json() == {
+        "error": {"code": "CUSTOMER_NOT_FOUND"}}
+    body["customer"] = {"type": "NEW", "name": "Walk-in", "phone": "0501234567"}
+    response = client.post(ROOT + "/appointments", headers=owner, json=body)
+    assert response.status_code == 201
+    assert response.json()["customer_id"] != 9
+
+
+def test_customer_cannot_use_owner_mutations_and_still_sees_moved_booking(client, owner, booked_owner, http_data):
+    edited = move(client, booked_owner, owner, {"staff_id": 2})
+    assert edited.status_code == 200
+    session = login(client, http_data[2]["CUSTOMER"])
+    assert session.status_code == 200
+    headers = {**owner, "X-CSRF-Token": session.json()["csrf_token"]}
+    for suffix in ("/appointments", "/appointment-quotes"):
+        assert client.post(ROOT + suffix, headers=headers, json={}).status_code == 403
+    assert move(client, booked_owner, headers, {"staff_id": 1}).status_code == 403
+    detail = client.get("/api/v1/customer/appointments/" + str(edited.json()["appointment_id"]))
+    assert detail.status_code == 200
+    assert detail.json()["staff_id"] == 2
+    assert detail.json()["items"] == booked_owner.json()["items"]
+
+
+@pytest.mark.parametrize("statement,start,code", [
+    ("INSERT INTO schedule_breaks(staff_id,day_of_week,start_time,end_time) VALUES (1,1,'11:00','11:30')",
+     "2027-01-04T11:00:00", "APPOINTMENT_UNAVAILABLE"),
+    ("""INSERT INTO schedule_blocks(business_id,start_datetime,end_datetime)
+        VALUES (1,'2027-01-04T11:00:00','2027-01-04T11:30:00')""",
+     "2027-01-04T11:00:00", "APPOINTMENT_UNAVAILABLE"),
+    ("UPDATE business_settings SET minimum_booking_notice_minutes=60",
+     "2027-01-04T09:59:59", "MINIMUM_BOOKING_NOTICE_VIOLATION"),
+    ("UPDATE business_settings SET booking_window_months=1",
+     "2027-02-05T10:00:00", "BOOKING_WINDOW_EXCEEDED"),
+])
+def test_edit_obeys_destination_policy_and_schedule(client, owner, booked_owner, http_data, statement, start, code):
+    execute(http_data[0], statement)
+    result = move(client, booked_owner, owner, {"start_datetime": start})
+    assert result.json() == {"error": {"code": code}}
+    assert client.get(booked_owner.headers["location"]).headers["etag"] == booked_owner.headers["etag"]
+
+
+def test_calendar_reads_one_batch_of_items_in_its_snapshot(client, owner, http_data, monkeypatch):
+    ids = [
+        insert_appointment(http_data[0], "2027-01-04T10:00:00", "2027-01-04T10:45:00"),
+        insert_appointment(http_data[0], "2027-01-04T11:00:00", "2027-01-04T11:45:00"),
+    ]
+    original = repositories.get_owner_appointment_items
+    batches = []
+
+    def items(connection, business_id, appointment_ids):
+        assert connection.in_transaction
+        batches.append((business_id, appointment_ids))
+        return original(connection, business_id, appointment_ids)
+
+    monkeypatch.setattr(repositories, "get_owner_appointment_items", items)
+    result = client.get(CALENDAR)
+    assert result.status_code == 200
+    assert batches == [(1, ids)]
+
+
+def test_booking_options_rejects_oversized_catalog(client, owner, http_data):
+    execute(http_data[0], """WITH RECURSIVE n(value) AS (
+        SELECT 3 UNION ALL SELECT value + 1 FROM n WHERE value < 201
+    ) INSERT INTO services(business_id,name,default_duration_minutes,default_price)
+       SELECT 1,'Test service ' || value,45,80 FROM n""")
+    response = client.get(ROOT + "/booking-options")
+    assert response.status_code == 503
+    assert response.json() == {"error": {"code": "BOOKING_OPTIONS_LIMIT_EXCEEDED"}}

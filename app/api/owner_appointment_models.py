@@ -10,7 +10,6 @@ from app.api.customer_booking_models import (
 )
 
 
-
 class CalendarAppointment(QuoteView):
     appointment_id: PositiveID
     customer_id: PositiveID
@@ -23,9 +22,7 @@ class AppointmentDetail(CalendarAppointment):
     customer_phone: str | None
 
 
-
-
-def validated_phone(value):
+def validated_phone(value: str) -> str:
     value = value.strip()
     if re.fullmatch(r"\+?[0-9]{7,15}", value) is None:
         raise ValueError("INVALID_PHONE")
@@ -104,7 +101,6 @@ class SlotQuote(StrictModel):
     available: bool
     reason: str | None
     quote: ConfirmableSlot | None
-
 
 
 class OwnerAppointmentEdit(StrictModel):
