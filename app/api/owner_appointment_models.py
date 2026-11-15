@@ -61,7 +61,7 @@ class OwnerSlot(SlotRequest):
 
 
 class OwnerBooking(OwnerSlot):
-    customer: ExistingCustomer
+    customer: Annotated[ExistingCustomer | NewCustomer, Field(discriminator="type")]
     confirmation: Confirmation
     notes: Annotated[str | None, Field(max_length=2000)] = None
 

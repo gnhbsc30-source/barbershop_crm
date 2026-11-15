@@ -161,3 +161,76 @@ def test_existing_customer_booking_success_and_overlap(client, owner, schedule_c
 @pytest.mark.parametrize("suffix", ["/appointments", "/appointment-quotes"])
 def test_owner_post_requires_csrf(client, owner, suffix):
     assert client.post(ROOT + suffix, headers={"Origin": owner["Origin"]}, json={}).status_code == 403
+
+
+@pytest.mark.parametrize("phone", [None, "+972501234567"])
+def test_guest_booking_survives_real_lifespan_restart(http_data, schedule_clock, phone):
+    from starlette.testclient import TestClient
+    from app.core.local_security import DEVELOPMENT_ORIGIN
+    from app.main import app
+
+    with TestClient(app, base_url=DEVELOPMENT_ORIGIN, client=("127.0.0.1", 50000)) as first:
+        session = login(first, http_data[2]["OWNER"])
+        headers = {"Origin": DEVELOPMENT_ORIGIN, "X-CSRF-Token": session.json()["csrf_token"]}
+        guest = {"type": "NEW", "name": "Walk-in"}
+        if phone is not None:
+            guest["phone"] = phone
+        result = first.post(ROOT + "/appointments", headers=headers, json=booking_body(first, headers, customer=guest))
+        assert result.status_code == 201, result.text
+        assert result.json()["customer_phone"] == phone
+
+    with TestClient(app, base_url=DEVELOPMENT_ORIGIN, client=("127.0.0.1", 50000)) as second:
+        assert login(second, http_data[2]["OWNER"]).status_code == 200
+        assert second.get(result.headers["location"]).json() == result.json()
+        assert second.get(ROOT + "/customers?name_prefix=Walk").json()["customers"] == [
+            {"customer_id": result.json()["customer_id"], "name": "Walk-in", "phone": phone}]
+    assert counts(http_data[0]) == (2, 1, 1, 1)
+
+
+@pytest.mark.parametrize("active", [0, 1])
+def test_guest_exact_duplicate_rejected(client, owner, schedule_clock, http_data, active):
+    execute(http_data[0], "UPDATE customers SET phone='0501234567', is_active=? WHERE id=1", (active,))
+    body = booking_body(client, owner, customer={"type": "NEW", "name": "Walk-in", "phone": " 0501234567 "})
+    result = client.post(ROOT + "/appointments", headers=owner, json=body)
+    assert result.status_code == 409
+    assert result.json()["error"]["code"] == "CUSTOMER_PHONE_ALREADY_EXISTS"
+    assert counts(http_data[0]) == (1, 1, 0, 0)
+
+
+@pytest.mark.parametrize("failure", ["quote", "response", "item"])
+def test_guest_booking_rolls_back_everything(client, owner, schedule_clock, http_data, monkeypatch, failure):
+    from app.api import owner_appointments
+    body = booking_body(client, owner, customer={"type": "NEW", "name": "Walk-in"})
+    if failure == "quote":
+        execute(http_data[0], "UPDATE services SET default_price=81 WHERE id=1")
+        status = 409
+    else:
+        def fail(*args, **kwargs):
+            raise RuntimeError("private")
+        if failure == "response":
+            monkeypatch.setattr(owner_appointments, "detail_response", fail)
+        else:
+            execute(http_data[0], """CREATE TRIGGER deny_item BEFORE INSERT ON appointment_items
+                BEGIN SELECT RAISE(ABORT, 'private'); END""")
+        status = 500
+    result = client.post(ROOT + "/appointments", headers=owner, json=body)
+    assert result.status_code == status and "private" not in result.text
+    assert counts(http_data[0]) == (1, 1, 0, 0)
+
+
+@pytest.mark.parametrize("change", [
+    "UPDATE customers SET name='Altered' WHERE id=1",
+    "INSERT INTO customers(business_id,name,customer_type) VALUES (1,'Unexpected','REGISTERED')",
+    """INSERT INTO customer_accounts(business_id,customer_id,username,password_hash)
+       VALUES (1,2,'unexpected','unusable')""",
+])
+def test_development_lifespan_still_rejects_seed_or_account_changes(http_data, change):
+    from starlette.testclient import TestClient
+    from app import dev_data
+    from app.main import app
+
+    execute(http_data[0], "INSERT INTO customers(business_id,name,customer_type) VALUES (1,'Guest','GUEST')")
+    execute(http_data[0], change)
+    with pytest.raises(dev_data.DevelopmentDataError, match="DEVELOPMENT_DATA_INCONSISTENT"):
+        with TestClient(app):
+            pytest.fail("startup must fail closed")

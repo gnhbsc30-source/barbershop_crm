@@ -5,10 +5,12 @@ import hashlib
 import json
 
 from app.db import repositories
-from app.db.database import read_snapshot
+from app.db.database import read_snapshot, transaction
+from app.exceptions.customer import CustomerAlreadyExistsError
 from app.services.appointments import AppointmentBookingError, AppointmentService, ResolvedAppointmentItem
 from app.services.availability import AvailabilityEngine
 from app.services.customer_booking import item_summary
+from app.services.customers import create_customer
 
 
 class OwnerAppointmentError(AppointmentBookingError):
@@ -105,12 +107,23 @@ class OwnerAppointments:
             nonlocal response
             response = prepare_response(*self._detail(result.appointment_id))
 
-        AppointmentService(self.connection).book(
-            business_id=self.business_id, customer_id=data.customer.customer_id,
-            start_datetime=data.start_datetime, service_ids=data.service_ids,
-            staff_selection={"type": "SPECIFIC", "staff_id": data.staff_id},
-            confirmation=data.confirmation.domain(), notes=data.notes, before_commit=before_commit,
-            require_active_customer=True)
+        service = AppointmentService(self.connection)
+        arguments = {
+            "business_id": self.business_id, "start_datetime": data.start_datetime,
+            "service_ids": data.service_ids, "confirmation": data.confirmation.domain(),
+            "notes": data.notes, "before_commit": before_commit, "require_active_customer": True,
+        }
+        if data.customer.type == "EXISTING":
+            service.book(customer_id=data.customer.customer_id,
+                         staff_selection={"type": "SPECIFIC", "staff_id": data.staff_id}, **arguments)
+        else:
+            with transaction(self.connection):
+                try:
+                    customer_id = create_customer(
+                        self.connection, self.business_id, name=data.customer.name, phone=data.customer.phone)
+                except CustomerAlreadyExistsError:
+                    raise OwnerAppointmentError("CUSTOMER_PHONE_ALREADY_EXISTS") from None
+                service._book_in_transaction(customer_id=customer_id, staff_id=data.staff_id, **arguments)
         return response
 
     def _with_items(self, rows):
