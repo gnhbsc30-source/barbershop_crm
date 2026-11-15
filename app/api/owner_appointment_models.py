@@ -3,7 +3,7 @@
 import re
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.api.customer_booking_models import (
     Confirmation, PositiveID, PriceSummary, QuoteView, SlotRequest, StrictModel,
@@ -104,3 +104,20 @@ class SlotQuote(StrictModel):
     available: bool
     reason: str | None
     quote: ConfirmableSlot | None
+
+
+
+class OwnerAppointmentEdit(StrictModel):
+    staff_id: PositiveID | None = None
+    start_datetime: str | None = None
+
+    @field_validator("start_datetime")
+    @classmethod
+    def local_start(cls, value):
+        return SlotRequest.local_datetime(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def valid_patch(self):
+        if not self.model_fields_set or any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("INVALID_PATCH")
+        return self

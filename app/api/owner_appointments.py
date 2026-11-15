@@ -16,7 +16,7 @@ from app.api.booking_dependencies import positive_query, query_keys, read_custom
 from app.api.customer_booking_models import StrictModel, request_contract
 from app.api.owner_appointment_models import (
     AppointmentDetail, BookingOptions, CalendarAppointment, CustomerPage,
-    OwnerBooking, OwnerSlot, SlotQuote, validated_phone,
+    OwnerAppointmentEdit, OwnerBooking, OwnerSlot, SlotQuote, validated_phone,
 )
 from app.core import booking_clock
 from app.db import database, repositories
@@ -180,3 +180,18 @@ async def book(request: Request, context=Depends(require_owner_mutation)):
     data = await read_customer_body(request, OwnerBooking)
     return await run_in_threadpool(execute_owner, request, context, lambda service: service.book(
         data, lambda detail, etag: detail_response(detail, etag, status=201)), scheduling=True)
+
+
+
+@router.patch("/appointments/{appointment_id}", response_model=AppointmentDetail,
+              openapi_extra=request_contract(OwnerAppointmentEdit))
+async def edit(appointment_id: str, request: Request, context=Depends(require_owner_mutation)):
+    identifier = positive_query(appointment_id)
+    tokens = request.headers.getlist("if-match")
+    if not tokens:
+        raise AuthHTTPError(428, "IF_MATCH_REQUIRED")
+    if len(tokens) != 1 or re.fullmatch(r'"[a-f0-9]{64}"', tokens[0]) is None:
+        raise AuthHTTPError(422, "INVALID_IF_MATCH")
+    data = await read_customer_body(request, OwnerAppointmentEdit)
+    return await run_in_threadpool(execute_owner, request, context,
+        lambda service: service.edit(identifier, data, tokens[0], detail_response), scheduling=True)

@@ -682,6 +682,8 @@ def get_staff_appointments(
     staff_id: int,
     start_datetime: str,
     end_datetime: str,
+    *,
+    exclude_appointment_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """Return active appointments for a staff member overlapping a time range."""
     rows = connection.execute(
@@ -701,6 +703,7 @@ def get_staff_appointments(
           AND status != 'CANCELLED'
           AND start_datetime < ?
           AND end_datetime > ?
+          AND (? IS NULL OR id != ?)
         ORDER BY start_datetime
         """,
         (
@@ -708,6 +711,8 @@ def get_staff_appointments(
             staff_id,
             end_datetime,
             start_datetime,
+            exclude_appointment_id,
+            exclude_appointment_id,
         ),
     ).fetchall()
 
@@ -806,3 +811,11 @@ def list_owner_booking_catalog(connection, business_id, limit):
            WHERE business_id = ? AND is_active = 1 ORDER BY id LIMIT ?""",
         (business_id, limit))
     return [dict(row) for row in services], [dict(row) for row in staff]
+
+
+
+def update_owner_appointment_schedule(connection, business_id, appointment_id, *, staff_id, start, end, revision):
+    connection.execute(
+        """UPDATE appointments SET staff_id = ?, start_datetime = ?, end_datetime = ?, updated_at = ?
+           WHERE business_id = ? AND id = ?""",
+        (staff_id, start, end, revision, business_id, appointment_id))

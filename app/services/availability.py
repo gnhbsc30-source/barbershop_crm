@@ -381,6 +381,10 @@ class AvailabilityEngine:
 
         return eligible_staff
 
+    def staff_supports_services(self, *, business_id: int, staff_id: int, service_ids: list[int]) -> bool:
+        return self._staff_supports_all_services(
+            business_id=business_id, staff_id=staff_id, service_ids=service_ids)
+
     def _staff_supports_all_services(
         self,
         business_id: int,
@@ -466,12 +470,21 @@ class AvailabilityEngine:
     # REAL SCHEDULE
     # ==================================================================
 
+    def can_move_appointment(
+        self, *, business_id: int, staff_id: int, start: datetime, end: datetime, appointment_id: int,
+    ) -> bool:
+        """Check the booked interval, excluding only the appointment being moved."""
+        return self._fits_staff_schedule(
+            business_id, staff_id, start, end, exclude_appointment_id=appointment_id)
+
     def _fits_staff_schedule(
         self,
         business_id: int,
         staff_id: int,
         start_datetime: datetime,
         end_datetime: datetime,
+        *,
+        exclude_appointment_id: int | None = None,
     ) -> bool:
         """
         Check whether the complete requested interval fits into the
@@ -603,6 +616,7 @@ class AvailabilityEngine:
             staff_id,
             start_datetime.isoformat(),
             end_datetime.isoformat(),
+            exclude_appointment_id=exclude_appointment_id,
         )
 
         for appointment in appointments:

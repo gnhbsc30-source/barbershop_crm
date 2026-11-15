@@ -1,6 +1,6 @@
 """Tenant-scoped owner appointment reads and commands."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 
@@ -9,6 +9,7 @@ from app.db.database import read_snapshot, transaction
 from app.exceptions.customer import CustomerAlreadyExistsError
 from app.services.appointments import AppointmentBookingError, AppointmentService, ResolvedAppointmentItem
 from app.services.availability import AvailabilityEngine
+from app.services.booking_confirmation import BookingConfigurationError
 from app.services.customer_booking import item_summary
 from app.services.customers import create_customer
 
@@ -46,15 +47,16 @@ class OwnerAppointments:
         with read_snapshot(self.connection):
             return self._detail(appointment_id)
 
-    def _detail(self, appointment_id):
+    def _detail(self, appointment_id, *, include_revision=False):
         rows = repositories.get_owner_appointment_rows(
             self.connection, self.business_id, appointment_id=appointment_id)
         if not rows:
             raise OwnerAppointmentError("APPOINTMENT_NOT_FOUND")
         detail, = self._with_items(rows)
         revision = detail.pop("updated_at")
-        parse_revision(revision)
-        return detail, appointment_etag(self.business_id, revision, detail)
+        parsed = parse_revision(revision)
+        etag = appointment_etag(self.business_id, revision, detail)
+        return (detail, etag, parsed) if include_revision else (detail, etag)
 
     def customers(self, *, limit, after_id, name_prefix, phone):
         rows = repositories.list_owner_customers(
@@ -126,6 +128,53 @@ class OwnerAppointments:
                 service._book_in_transaction(customer_id=customer_id, staff_id=data.staff_id, **arguments)
         return response
 
+    def edit(self, appointment_id, data, expected_etag, prepare_response):
+        with transaction(self.connection):
+            current, etag, revision = self._detail(appointment_id, include_revision=True)
+            if etag != expected_etag:
+                raise OwnerAppointmentError("APPOINTMENT_VERSION_MISMATCH")
+            old_start = datetime.fromisoformat(current["start_datetime"])
+            if current["status"] != "BOOKED" or old_start <= datetime.now():
+                raise OwnerAppointmentError("APPOINTMENT_NOT_EDITABLE")
+
+            staff_id = data.staff_id if "staff_id" in data.model_fields_set else current["staff_id"]
+            start = datetime.fromisoformat(data.start_datetime) if "start_datetime" in data.model_fields_set else old_start
+            if staff_id == current["staff_id"] and start == old_start:
+                return prepare_response(current, etag)
+
+            self._validate_destination(staff_id, current["items"])
+            duration = timedelta(minutes=current["total_duration_minutes"])
+            if not current["items"] or old_start + duration != datetime.fromisoformat(current["end_datetime"]):
+                raise BookingConfigurationError()
+            AppointmentService(self.connection).validate_booking_policy(
+                business_id=self.business_id, requested_start=start)
+            end = start + duration
+            if not AvailabilityEngine(self.connection).can_move_appointment(
+                business_id=self.business_id, staff_id=staff_id, start=start, end=end,
+                appointment_id=appointment_id,
+            ):
+                raise OwnerAppointmentError("APPOINTMENT_UNAVAILABLE")
+
+            utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
+            new_revision = max(utc_now, revision + timedelta(microseconds=1))
+            repositories.update_owner_appointment_schedule(
+                self.connection, self.business_id, appointment_id, staff_id=staff_id,
+                start=start.isoformat(), end=end.isoformat(),
+                revision=new_revision.isoformat(sep=" ", timespec="microseconds"))
+            return prepare_response(*self._detail(appointment_id))
+
+    def _validate_destination(self, staff_id, items):
+        staff = repositories.get_staff(self.connection, self.business_id, staff_id)
+        if not staff or not staff["is_active"]:
+            raise OwnerAppointmentError("STAFF_NOT_FOUND")
+        service_ids = list(dict.fromkeys(item["service_id"] for item in items))
+        if len(repositories.get_services_by_ids(self.connection, self.business_id, service_ids)) != len(service_ids):
+            raise OwnerAppointmentError("BOOKED_SERVICE_INACTIVE")
+        if not AvailabilityEngine(self.connection).staff_supports_services(
+            business_id=self.business_id, staff_id=staff_id, service_ids=service_ids,
+        ):
+            raise OwnerAppointmentError("SERVICE_NOT_SUPPORTED")
+
     def _with_items(self, rows):
         grouped = {row["appointment_id"]: [] for row in rows}
         for item in repositories.get_owner_appointment_items(self.connection, self.business_id, list(grouped)):
@@ -135,12 +184,10 @@ class OwnerAppointments:
 
 
 def parse_revision(value):
-    from app.services.booking_confirmation import BookingConfigurationError
-
     try:
         revision = datetime.fromisoformat(value)
     except (ValueError, TypeError):
         raise BookingConfigurationError() from None
-    if revision.tzinfo is not None:
+    if revision.tzinfo is not None or " " not in value and "T" not in value:
         raise BookingConfigurationError()
     return revision

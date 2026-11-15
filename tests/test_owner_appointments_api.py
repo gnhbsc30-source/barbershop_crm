@@ -234,3 +234,95 @@ def test_development_lifespan_still_rejects_seed_or_account_changes(http_data, c
     with pytest.raises(dev_data.DevelopmentDataError, match="DEVELOPMENT_DATA_INCONSISTENT"):
         with TestClient(app):
             pytest.fail("startup must fail closed")
+
+
+@pytest.fixture
+def booked_owner(client, owner, schedule_clock):
+    response = client.post(ROOT + "/appointments", headers=owner, json=booking_body(client, owner))
+    assert response.status_code == 201, response.text
+    return response
+
+
+def move(client, booked, headers, fields, token=None):
+    return client.patch(booked.headers["location"], json=fields,
+                        headers={**headers, "If-Match": token or booked.headers["etag"]})
+
+
+def test_edit_if_match_and_csrf(client, owner, booked_owner):
+    url = booked_owner.headers["location"]
+    assert client.patch(url, headers={"Origin": owner["Origin"]}, json={}).status_code == 403
+    assert client.patch(url, headers=owner, json={"staff_id": 2}).status_code == 428
+    for invalid in ("*", 'W/"abc"', '"' + "a" * 64 + '", "other"'):
+        assert move(client, booked_owner, owner, {"staff_id": 2}, token=invalid).status_code == 422
+    for invalid in ({}, {"staff_id": None}, {"start_datetime": None}, {"notes": "no"},
+                    {"start_datetime": "2027-01-04T11:00:00Z"}):
+        assert move(client, booked_owner, owner, invalid).status_code == 422
+    stale = move(client, booked_owner, owner, {"staff_id": 1}, token='"' + "0" * 64 + '"')
+    assert stale.status_code == 412
+
+
+def test_noop_and_rapid_a_to_b_to_a_moves(client, owner, booked_owner, http_data):
+    url = booked_owner.headers["location"]
+    original_tag = booked_owner.headers["etag"]
+    assert move(client, booked_owner, owner, {"staff_id": 1}).headers["etag"] == original_tag
+    execute(http_data[0], "UPDATE services SET name='Changed', default_duration_minutes=90, default_price=91 WHERE id=1")
+    partial = move(client, booked_owner, owner, {"start_datetime": "2027-01-04T10:15:00"})
+    assert partial.status_code == 200, partial.text
+    assert partial.json()["end_datetime"] == "2027-01-04T11:00:00"
+    restored = move(client, booked_owner, owner, {"start_datetime": SLOT["start_datetime"]}, token=partial.headers["etag"])
+    assert restored.status_code == 200 and restored.json() == booked_owner.json()
+    assert len({original_tag, partial.headers["etag"], restored.headers["etag"]}) == 3
+    assert move(client, booked_owner, owner, {"staff_id": 1}).status_code == 412
+    assert client.get(url).headers["etag"] == restored.headers["etag"]
+
+
+@pytest.mark.parametrize("patch,field,expected", [
+    ({"staff_id": 2}, "staff_id", 2),
+    ({"start_datetime": "2027-01-05T10:00:00"}, "start_datetime", "2027-01-05T10:00:00"),
+])
+def test_partial_moves(client, owner, booked_owner, patch, field, expected):
+    result = move(client, booked_owner, owner, patch)
+    assert result.status_code == 200, result.text
+    assert result.json()[field] == expected
+    for key in ("customer_id", "notes", "items", "total_price", "total_duration_minutes", "status"):
+        assert result.json()[key] == booked_owner.json()[key]
+
+
+@pytest.mark.parametrize("change,code", [
+    ("UPDATE appointments SET status='COMPLETED'", "APPOINTMENT_NOT_EDITABLE"),
+    ("UPDATE appointments SET status='CANCELLED'", "APPOINTMENT_NOT_EDITABLE"),
+    ("UPDATE appointments SET status='NO_SHOW'", "APPOINTMENT_NOT_EDITABLE"),
+    ("UPDATE appointments SET start_datetime='2027-01-04T08:00:00'", "APPOINTMENT_NOT_EDITABLE"),
+    ("UPDATE services SET is_active=0 WHERE id=1", "BOOKED_SERVICE_INACTIVE"),
+    ("UPDATE staff SET is_active=0 WHERE id=2", "STAFF_NOT_FOUND"),
+    ("UPDATE staff_services SET is_active=0 WHERE staff_id=2 AND service_id=1", "SERVICE_NOT_SUPPORTED"),
+])
+def test_ineligible_edit_preserves_visible_appointment(client, owner, booked_owner, http_data, change, code):
+    execute(http_data[0], change)
+    detail = client.get(booked_owner.headers["location"])
+    assert detail.status_code == 200
+    result = move(client, booked_owner, owner, {"staff_id": 2}, token=detail.headers["etag"])
+    assert result.json() == {"error": {"code": code}}
+    assert client.get(booked_owner.headers["location"]).json() == detail.json()
+
+
+def test_edit_checks_other_appointments(client, owner, booked_owner, http_data):
+    insert_appointment(http_data[0], "2027-01-04T11:00:00", "2027-01-04T11:45:00")
+    conflict = move(client, booked_owner, owner, {"start_datetime": "2027-01-04T10:30:00"})
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "APPOINTMENT_UNAVAILABLE"
+
+
+def test_edit_response_failure_rolls_back_schedule_and_revision(client, owner, booked_owner, monkeypatch):
+    from app.api import owner_appointments
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("private")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(owner_appointments, "detail_response", fail)
+        result = move(client, booked_owner, owner, {"staff_id": 2})
+    assert result.status_code == 500 and "private" not in result.text
+    detail = client.get(booked_owner.headers["location"])
+    assert detail.json() == booked_owner.json()
+    assert detail.headers["etag"] == booked_owner.headers["etag"]
