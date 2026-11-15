@@ -1,14 +1,18 @@
 # Barbershop CRM — Conversation Context Archive
 # Curated recovery context, not a literal transcript of every chat message.
 
-## Current Verified Feature Checkpoint — 2026-11-13
+## Current Verified Post-Merge Checkpoint — 2026-11-15
 
 Project: /Users/aminadavyamin/Documents/Projects/barbershop_crm
-Branch: feature/stage-30b2-customer-booking-api
-Verified implementation/remediation HEAD: 6abf95ea9918df3bf7f0a58e0eaa5235266803d1
-Local and remote main: 3f66b1c37127d7cec8b0db9616cde29b163cc3ae
-Full regression: 560 passed, 0 failed. Audit-focused regression: 249 passed.
-Stage 30B.2 is implemented and audited on the feature branch. Merge is pending.
+Branch: main
+PR #4: https://github.com/gnhbsc30-source/barbershop_crm/pull/4 (merged 2026-11-15)
+Verified regular merge commit: 7119d95f50325812ea07b443997eca478d5d075b
+Pre-merge main: 3f66b1c37127d7cec8b0db9616cde29b163cc3ae
+Retained feature branch: feature/stage-30b2-customer-booking-api
+Reviewed PR head: 6de4a2d661a685c1a9e894dbf93360cb93d1759f
+Historical implementation/remediation HEAD: 6abf95ea9918df3bf7f0a58e0eaa5235266803d1
+All seven Stage 30B.2 feature commits are ancestors of main.
+Post-merge full regression: 560 passed, 0 failed. Historical audit-focused regression: 249 passed.
 Audit verdict: READY WITH NOTES for the local development MVP.
 Git history records the subsequent documentation-only checkpoint commit.
 
@@ -639,10 +643,10 @@ Limits and exclusions:
 - Local-only, single-process in-memory sessions/rate limits/selection contexts; no restart durability or multi-worker support. Production auth, HTTPS, shared atomic storage and persistent migrations remain deferred.
 - Trusted local OS/filesystem boundary; supported launcher safeguards do not certify arbitrary ASGI configurations. Cross-resource crash atomicity and retroactive revocation of in-flight authorized work are not guaranteed.
 - Non-blocking hardening: Argon2 work-factor bounds, slow-body/concurrent-request resource controls, safe unexpected-error diagnostics and additional logout/rotation race coverage. Stage 29 timezone/DST, integer settings and lazy selection-context cleanup notes remain.
-- Stage 30B.1 supplied authentication. Customer booking HTTP and search ownership arrived on the Stage 30B.2 feature branch. Owner APIs, frontend, cancellation/rescheduling, ANY Alternative Discovery and AI/Chat remain deferred.
+- Stage 30B.1 supplied authentication. Customer booking HTTP and search ownership were added in Stage 30B.2 and are now on main. Owner APIs, frontend, cancellation/rescheduling, ANY Alternative Discovery and AI/Chat remain deferred.
 - Future owner edits are staff/date/time only; services, customer identity, manual price and notes changes are excluded from MVP rescheduling. Cancellation, rescheduling, owner-override and repricing rules still need approval; no new policy is inferred.
 
-## Stage 30B.2 — Customer Booking API (Merge Pending)
+## Stage 30B.2 — Customer Booking API (Merged and Verified)
 
 Under /api/v1/customer: GET /services, GET /staff, POST /booking-searches,
 POST /appointments, POST /booking-searches/{search_id}/selection,
@@ -697,10 +701,10 @@ one isolated business/customer organization inside the SaaS.
 
 ## Current Next Step
 
-Review the Stage 30B.2 pull request and await explicit merge approval.
-Post-merge verification follows a separately approved merge. Stage 30B.3 has
-not started. Future owner editing is limited to staff/date/time; lifecycle,
-owner overrides and repricing policies still require approval.
+Stage 30B.2 is merged and verified. Stage 30B.3 has not started. Await separate
+architectural approval before starting the next milestone. Future owner editing
+is limited to staff/date/time. Lifecycle, owner overrides and repricing policies
+still require approval.
 
 ## Context Safety Rule
 

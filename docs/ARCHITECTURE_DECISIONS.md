@@ -17,10 +17,15 @@ Stage 29 was merged via [PR #2](https://github.com/gnhbsc30-source/barbershop_cr
 regular Merge Commit `d6b4866461bab2ea13dd8a001b3101136110c26a`, verified with 167 tests.
 Its historical audit/implementation facts remain in ADR-027 through ADR-034.
 ADR-035 onward records Stage 30 decisions, without changing scheduling contracts.
-Current feature checkpoint (2026-11-13): Stage 30B.2 is implemented and audited on
-`feature/stage-30b2-customer-booking-api` at implementation HEAD
-`6abf95ea9918df3bf7f0a58e0eaa5235266803d1`. Full regression **560 passed, 0 failed**.
-`main` remains at `3f66b1c37127d7cec8b0db9616cde29b163cc3ae`. Merge is pending architectural approval.
+Current post-merge checkpoint (2026-11-15): Stage 30B.2 merged into `main` through
+[PR #4](https://github.com/gnhbsc30-source/barbershop_crm/pull/4) as regular merge commit
+`7119d95f50325812ea07b443997eca478d5d075b`, preserving all seven feature commits.
+Post-merge regression: **560 passed, 0 failed**. Reviewed PR head:
+`6de4a2d661a685c1a9e894dbf93360cb93d1759f` on retained branch
+`feature/stage-30b2-customer-booking-api`. The audit remediation checkpoint
+was `6abf95ea9918df3bf7f0a58e0eaa5235266803d1`. ADR-042 through ADR-044 remain
+the approved development MVP decisions. Stage 30B.3 has not started and the
+next milestone requires separate architectural approval.
 
 ## ADR-001 — Database Is the Source of Truth
 
