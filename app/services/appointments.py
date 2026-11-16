@@ -490,30 +490,22 @@ class AppointmentService:
         requested_start: datetime,
     ) -> None:
         """Apply business booking-window and minimum-notice rules."""
-        settings = get_business_settings(self.connection, business_id)
-        booking_window_months = (
-            settings["booking_window_months"] if settings else 3
-        )
-        minimum_booking_notice_minutes = (
-            settings["minimum_booking_notice_minutes"] if settings else 0
-        )
-        now = self._now_provider()
-
+        now, earliest, latest = self.booking_policy_bounds(business_id)
         if requested_start < now:
             raise AppointmentBookingError("PAST_DATETIME")
-
-        earliest_allowed_start = now + timedelta(
-            minutes=minimum_booking_notice_minutes
-        )
-        if requested_start < earliest_allowed_start:
+        if requested_start < earliest:
             raise AppointmentBookingError("MINIMUM_BOOKING_NOTICE_VIOLATION")
-
-        latest_allowed_start = self.add_calendar_months(
-            now,
-            booking_window_months,
-        )
-        if requested_start > latest_allowed_start:
+        if requested_start > latest:
             raise AppointmentBookingError("BOOKING_WINDOW_EXCEEDED")
+
+    def booking_policy_bounds(self, business_id, *, settings=None):
+        """Use one business-local clock reading for a preview or booking check."""
+        if settings is None:
+            settings = get_business_settings(self.connection, business_id) or {}
+        now = self._now_provider()
+        earliest = now + timedelta(minutes=settings.get("minimum_booking_notice_minutes", 0))
+        latest = self.add_calendar_months(now, settings.get("booking_window_months", 3))
+        return now, earliest, latest
 
     def validate_booking_policy(self, *, business_id: int, requested_start: datetime) -> None:
         """Expose the existing policy for application previews, without duplication."""

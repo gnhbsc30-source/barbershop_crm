@@ -11,6 +11,7 @@ from app.core.auth_rate_limit import AuthenticationRateLimiter
 from app.core.auth_sessions import InMemorySessionStore, SessionContext, SessionError
 from app.core.config import settings
 from app.core.tenant_slugs import local_slug_mapping
+from app.core.slot_admission import SlotAdmission
 from app.core.local_security import validate_local_startup
 from app.core.booking_search_ownership import BookingSearchOwnership
 from app.db import database
@@ -46,6 +47,7 @@ async def authentication_lifespan(app):
     app.state.tenant_slugs = await run_in_threadpool(_read_slug_mapping, path.resolve())
     app.state.auth_database_path = path.resolve()
     app.state.auth_identities = MappingProxyType(identities)
+    app.state.slot_admission = SlotAdmission()
     app.state.auth_sessions = InMemorySessionStore()
     app.state.auth_limiter = AuthenticationRateLimiter()
     app.state.booking_contexts = InMemoryAlternativeSelectionContextStore(lambda: datetime.now(timezone.utc))
@@ -53,7 +55,7 @@ async def authentication_lifespan(app):
     try:
         yield
     finally:
-        for attribute in ("tenant_slugs", "auth_database_path", "auth_identities", "auth_sessions", "auth_limiter", "booking_contexts", "booking_searches"):
+        for attribute in ("slot_admission", "tenant_slugs", "auth_database_path", "auth_identities", "auth_sessions", "auth_limiter", "booking_contexts", "booking_searches"):
             delattr(app.state, attribute)
 
 

@@ -623,6 +623,8 @@ def get_schedule_breaks(
     connection: Connection,
     staff_id: int,
     day_of_week: int,
+    *,
+    row_limit: int = -1,
 ) -> list[dict[str, Any]]:
     """Return all schedule breaks for a staff member on a specific day."""
     rows = connection.execute(
@@ -636,8 +638,9 @@ def get_schedule_breaks(
         WHERE staff_id = ?
           AND day_of_week = ?
         ORDER BY start_time
+        LIMIT ?
         """,
-        (staff_id, day_of_week),
+        (staff_id, day_of_week, row_limit),
     ).fetchall()
 
     return [dict(row) for row in rows]
@@ -648,6 +651,8 @@ def get_schedule_blocks(
     staff_id: int,
     start_datetime: str,
     end_datetime: str,
+    *,
+    row_limit: int = -1,
 ) -> list[dict[str, Any]]:
     """Return business-wide and staff-specific schedule blocks overlapping a time range."""
     rows = connection.execute(
@@ -665,12 +670,14 @@ def get_schedule_blocks(
           AND start_datetime < ?
           AND end_datetime > ?
         ORDER BY start_datetime
+        LIMIT ?
         """,
         (
             business_id,
             staff_id,
             end_datetime,
             start_datetime,
+            row_limit,
         ),
     ).fetchall()
 
@@ -684,6 +691,7 @@ def get_staff_appointments(
     end_datetime: str,
     *,
     exclude_appointment_id: int | None = None,
+    row_limit: int = -1,
 ) -> list[dict[str, Any]]:
     """Return active appointments for a staff member overlapping a time range."""
     rows = connection.execute(
@@ -705,6 +713,7 @@ def get_staff_appointments(
           AND end_datetime > ?
           AND (? IS NULL OR id != ?)
         ORDER BY start_datetime
+        LIMIT ?
         """,
         (
             business_id,
@@ -713,6 +722,7 @@ def get_staff_appointments(
             start_datetime,
             exclude_appointment_id,
             exclude_appointment_id,
+            row_limit,
         ),
     ).fetchall()
 

@@ -18,6 +18,10 @@ from app.db.repositories import (
 )
 
 
+class ScheduleBudgetExceeded(Exception):
+    pass
+
+
 StaffSelectionType = Literal["SPECIFIC", "ANY"]
 AnySelectionMode = Literal["CHOICE", "AUTO"]
 
@@ -647,12 +651,15 @@ class AvailabilityEngine:
         business_id: int,
         staff_id: int,
         target_date: date,
+        *,
+        row_budget: int | None = None,
     ) -> list[tuple[datetime, datetime]]:
         """Return the existing deterministic free windows for one staff day."""
         return self._build_staff_availability_windows(
             business_id=business_id,
             staff_id=staff_id,
             target_date=target_date,
+            row_budget=row_budget,
         )
 
     def _build_staff_availability_windows(
@@ -660,6 +667,8 @@ class AvailabilityEngine:
         business_id: int,
         staff_id: int,
         target_date: date,
+        *,
+        row_budget: int | None = None,
     ) -> list[tuple[datetime, datetime]]:
         """
         Build the real free windows for a staff member on a day.
@@ -731,11 +740,17 @@ class AvailabilityEngine:
         # Breaks
         # --------------------------------------------------------------
 
-        breaks = get_schedule_breaks(
-            self.connection,
-            staff_id,
-            day_of_week,
-        )
+        def read_blockers(reader, *args):
+            nonlocal row_budget
+            if row_budget is None:
+                return reader(*args)
+            rows = reader(*args, row_limit=row_budget + 1)
+            row_budget -= len(rows)
+            if row_budget < 0:
+                raise ScheduleBudgetExceeded()
+            return rows
+
+        breaks = read_blockers(get_schedule_breaks, self.connection, staff_id, day_of_week)
 
         for break_item in breaks:
             break_start, break_end = self._build_datetime_range(
@@ -752,7 +767,8 @@ class AvailabilityEngine:
         # Schedule blocks
         # --------------------------------------------------------------
 
-        blocks = get_schedule_blocks(
+        blocks = read_blockers(
+            get_schedule_blocks,
             self.connection,
             business_id,
             staff_id,
@@ -778,7 +794,8 @@ class AvailabilityEngine:
         # Existing appointments
         # --------------------------------------------------------------
 
-        appointments = get_staff_appointments(
+        appointments = read_blockers(
+            get_staff_appointments,
             self.connection,
             business_id,
             staff_id,
