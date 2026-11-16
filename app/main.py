@@ -5,6 +5,7 @@ from app.api.auth_dependencies import authentication_lifespan
 from app.api.customer_booking import router as customer_router
 from app.api.owner_appointments import router as owner_router
 from app.core.local_security import LoopbackSecurityMiddleware
+from app.api.web import install_web
 
 
 app = FastAPI(
@@ -24,3 +25,6 @@ app.include_router(owner_router)
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+install_web(app)

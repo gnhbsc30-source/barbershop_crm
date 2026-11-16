@@ -1,0 +1,17 @@
+:root {
+  --charcoal: #191b1a;
+  --leather: #624735;
+  --brass: #b99759;
+  --cream: #f4ebdd;
+  --green: #697b68;
+  color: var(--charcoal);
+  background: var(--cream);
+  font: 1rem/1.55 Arial, sans-serif;
+}
+body { margin: 0; }
+main { max-inline-size: 72rem; margin-inline: auto; padding: 1.5rem; }
+form { display: grid; gap: .75rem; max-inline-size: 26rem; }
+button, input, select { font: inherit; min-block-size: 44px; }
+button { color: var(--cream); background: var(--charcoal); padding-inline: 1rem; border: 2px solid var(--charcoal); border-radius: .25rem; }
+button:disabled { opacity: .65; }
+:focus-visible { outline: 3px solid var(--leather); outline-offset: 3px; }
