@@ -25,6 +25,7 @@ function App() {
   const base = '/b/' + encodeURIComponent(slug);
   const restoreRequest = useRef<AbortController | null>(null);
   const actionPending = useRef(false);
+  const revalidationPending = useRef(false);
   const sessionChannel = useRef<BroadcastChannel | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const loseSession = useCallback(() => {
@@ -48,7 +49,7 @@ function App() {
   }, [slug]);
 
   useEffect(() => {
-    if (!session || logoutPending) return;
+    if (!session) return;
     const controller = new AbortController();
     api('/auth/tenant-context/' + encodeURIComponent(slug), {signal: controller.signal}).then(
       () => { if (!controller.signal.aborted) setTenant({session, status: 'ready'}); },
@@ -59,29 +60,37 @@ function App() {
       },
     );
     return () => controller.abort();
-  }, [slug, session, logoutPending, loseSession]);
+  }, [slug, session, loseSession]);
+
+  const restore = useCallback((immediate = false) => {
+    if (actionPending.current) {
+      revalidationPending.current = true;
+      return;
+    }
+    revalidationPending.current = false;
+    restoreRequest.current?.abort();
+    const controller = new AbortController();
+    restoreRequest.current = controller;
+    const clearProtectedState = () => {
+      setSession(undefined);
+      setTenant(undefined);
+    };
+    if (immediate) {
+      flushSync(clearProtectedState);
+      // Reveal the loading shell only after the old protected view is gone.
+      document.documentElement.classList.remove('restoring');
+    } else clearProtectedState();
+    api<Session>('/auth/me', {signal: controller.signal}).then(
+      value => { if (!controller.signal.aborted) setSession(value); },
+      failure => {
+        if (controller.signal.aborted) return;
+        if (!(failure instanceof ApiError && failure.status === 401)) setError('לא ניתן לבדוק את מצב הכניסה.');
+        loseSession();
+      },
+    );
+  }, [loseSession]);
 
   useEffect(() => {
-    const restore = (immediate = false) => {
-      if (actionPending.current) return;
-      restoreRequest.current?.abort();
-      const controller = new AbortController();
-      restoreRequest.current = controller;
-      const clearProtectedState = () => {
-        setSession(undefined);
-        setTenant(undefined);
-      };
-      if (immediate) flushSync(clearProtectedState);
-      else clearProtectedState();
-      api<Session>('/auth/me', {signal: controller.signal}).then(
-        value => { if (!controller.signal.aborted) setSession(value); },
-        failure => {
-          if (controller.signal.aborted) return;
-          if (!(failure instanceof ApiError && failure.status === 401)) setError('לא ניתן לבדוק את מצב הכניסה.');
-          loseSession();
-        },
-      );
-    };
     const revalidate = () => restore(true);
     const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) revalidate(); };
     const onVisibility = () => { if (document.visibilityState === 'visible') revalidate(); };
@@ -117,9 +126,7 @@ function App() {
       channel?.close();
       sessionChannel.current = null;
     };
-  }, [loseSession]);
-
-  useEffect(() => { document.documentElement.classList.remove('restoring'); }, [session]);
+  }, [restore]);
 
   useEffect(() => {
     if (!session) return;
@@ -138,6 +145,12 @@ function App() {
     const timer = window.setTimeout(() => setRetryDelay(0), retryDelay * 1000);
     return () => window.clearTimeout(timer);
   }, [retryDelay]);
+
+  function finishAuthAction() {
+    actionPending.current = false;
+    setBusy(false);
+    if (revalidationPending.current) restore(true);
+  }
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -166,8 +179,7 @@ function App() {
         setError('הכניסה נכשלה.');
       }
     } finally {
-      actionPending.current = false;
-      setBusy(false);
+      finishAuthAction();
     }
   }
 
@@ -190,8 +202,7 @@ function App() {
       }
       else setError('היציאה נכשלה. ניתן לנסות שוב.');
     } finally {
-      actionPending.current = false;
-      setBusy(false);
+      finishAuthAction();
     }
   }
 

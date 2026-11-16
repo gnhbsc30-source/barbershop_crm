@@ -6,7 +6,10 @@ transport. The real launcher smoke test runs when port 8000 is available.
 """
 
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from urllib.parse import urlsplit
+
+import pytest
 
 from app.core import booking_clock
 from app.core.auth_sessions import InMemorySessionStore
@@ -285,12 +288,11 @@ def test_chromium_through_supported_launcher(two_businesses):
     import socket
     import subprocess
     import sys
-    from time import monotonic, sleep
+    from time import sleep
     from urllib.error import URLError
     from urllib.request import urlopen
     from zoneinfo import ZoneInfo
 
-    import pytest
     from playwright.sync_api import expect, sync_playwright
 
     with socket.socket() as probe:
@@ -314,9 +316,12 @@ def test_chromium_through_supported_launcher(two_businesses):
             else:
                 pytest.fail("Supported development launcher did not start")
             with sync_playwright() as playwright:
-                chromium = playwright.chromium.launch()
+                chromium = playwright.chromium.launch(ignore_default_args=["--disable-back-forward-cache"])
                 try:
                     page = chromium.new_page()
+                    page.add_init_script("""window.addEventListener('pageshow', event => {
+                        window.lastPageShowPersisted = event.persisted;
+                    });""")
                     page.goto(DEVELOPMENT_ORIGIN + "/b/first/book")
                     page.get_by_label("קוד גישה").fill(codes["CUSTOMER"])
                     page.get_by_role("button", name="כניסה", exact=True).click()
@@ -333,6 +338,14 @@ def test_chromium_through_supported_launcher(two_businesses):
                     expect(page.get_by_role("radio", name="09:00", exact=True)).to_be_visible()
                     page.goto(DEVELOPMENT_ORIGIN + "/b/other/book")
                     expect(page.get_by_role("alert")).to_contain_text("החיבור אינו מתאים")
+                    page.go_back(wait_until="commit")
+                    expect(page.get_by_role("checkbox", name="Haircut")).to_be_visible()
+                    page.wait_for_function("typeof window.lastPageShowPersisted === 'boolean'")
+                    print(f"Chromium Back pageshow.persisted={page.evaluate('window.lastPageShowPersisted')}")
+                    page.go_forward(wait_until="commit")
+                    expect(page.get_by_role("alert")).to_contain_text("החיבור אינו מתאים")
+                    page.wait_for_function("typeof window.lastPageShowPersisted === 'boolean'")
+                    print(f"Chromium Forward pageshow.persisted={page.evaluate('window.lastPageShowPersisted')}")
                     page.get_by_role("button", name="יציאה").click()
                     expect(page.get_by_label("קוד גישה")).to_be_visible()
                 finally:
@@ -340,3 +353,95 @@ def test_chromium_through_supported_launcher(two_businesses):
         finally:
             server.terminate()
             server.wait(timeout=5)
+
+
+@pytest.mark.parametrize("logout_status", [503, 204])
+def test_persisted_restore_during_pending_logout(two_businesses, logout_status):
+    from playwright.sync_api import expect, sync_playwright
+
+    _, codes = two_businesses
+    with browser() as client, sync_playwright() as playwright:
+        chromium = playwright.chromium.launch()
+        try:
+            page = chromium.new_page()
+            held = {}
+            hold = set()
+
+            def take_held(path):
+                # Playwright emits the request event before running the route handler.
+                deadline = monotonic() + 3
+                while path not in held and monotonic() < deadline:
+                    page.wait_for_timeout(10)
+                assert path in held, f"Route was not held: {path}"
+                return held.pop(path)
+
+            def respond(route, response):
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+            def relay(route):
+                request = route.request
+                url = urlsplit(request.url)
+                response = client.request(request.method, url.path, headers=request.all_headers(),
+                                          content=request.post_data_buffer, follow_redirects=False)
+                client.cookies.clear()
+                if url.path in hold:
+                    held[url.path] = route, response
+                else:
+                    respond(route, response)
+
+            page.route(DEVELOPMENT_ORIGIN + "/**", relay)
+            page.goto(DEVELOPMENT_ORIGIN + "/b/first/book")
+            page.get_by_label("קוד גישה").fill(codes["CUSTOMER"])
+            page.get_by_role("button", name="כניסה", exact=True).click()
+            catalog = page.get_by_role("checkbox", name="Haircut")
+            expect(catalog).to_be_visible()
+            logout = page.get_by_role("button", name="יציאה")
+            paths = ["/api/v1/auth/session", "/api/v1/auth/me", "/api/v1/auth/tenant-context/first"]
+            logout_path, me_path, tenant_path = paths
+            hold.update(paths)
+
+            # For 503, do not commit the underlying DELETE on the test server.
+            if logout_status == 503:
+                page.route(DEVELOPMENT_ORIGIN + logout_path, lambda route: held.update({logout_path: (route, None)}))
+            with page.expect_request(lambda request: request.url.endswith(logout_path)):
+                logout.click()
+            page.evaluate("""() => {
+                for (const type of ['pagehide', 'pageshow'])
+                    window.dispatchEvent(new PageTransitionEvent(type, {persisted: true}));
+            }""")
+            expect(page.locator("html")).to_have_class("restoring")
+            expect(catalog).to_have_count(0)
+            assert me_path not in held
+
+            route, response = take_held(logout_path)
+            with page.expect_request(lambda request: request.url.endswith(me_path)):
+                if logout_status == 503:
+                    route.fulfill(status=503, json={"error": {"code": "UNAVAILABLE"}})
+                else:
+                    respond(route, response)
+            expect(page.get_by_role("heading", level=1)).to_be_visible()
+            expect(catalog).to_have_count(0)
+            route, response = take_held(me_path)
+            if logout_status == 503:
+                expect(page.get_by_role("alert")).to_contain_text("היציאה נכשלה")
+                with page.expect_request(lambda request: request.url.endswith(tenant_path)):
+                    respond(route, response)
+                expect(catalog).to_have_count(0)
+                respond(*take_held(tenant_path))
+                expect(page.get_by_role("status")).to_contain_text("האזור האישי מוסתר")
+                expect(logout).to_be_visible()
+                expect(logout).to_be_enabled()
+                expect(catalog).to_have_count(0)
+                hold.clear()
+                page.unroute(DEVELOPMENT_ORIGIN + logout_path)
+                page.keyboard.press("Tab")
+                expect(logout).to_be_focused()
+                page.keyboard.press("Enter")
+            else:
+                respond(route, response)
+                assert tenant_path not in held
+
+            expect(page.get_by_label("קוד גישה")).to_be_visible()
+            expect(catalog).to_have_count(0)
+        finally:
+            chromium.close()

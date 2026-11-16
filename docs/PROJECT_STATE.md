@@ -20,7 +20,8 @@
 - A–E delivered the same-origin React/TypeScript/Vite build, public identity and tenant matching, CUSTOMER daily slots, role-aware Hebrew RTL skeletons, lossless SQLite identifiers and browser verification.
 - The public route uses a server-side development slug mapping and exposes only public identity. Access-code login remains development-only. See ADR-048 for the discovery, tenant-context and daily-slot API contracts, and ADR-049 for the display policy and workload limits.
 - Remediation adds focus and cross-tab session revalidation, tests for two occupied computations and a third HTTP session, and Hebrew and mixed-direction heading reflow at 320px and 200% CSS zoom. Chromium coverage also includes a smoke test through the supported loopback launcher. Native browser zoom, a screen-reader session, production deployment and DST fold/gap support remain unverified.
-- Remediation verification: 653 Python regression tests passed, including 91 focused cases in the availability, tenant and OWNER API suites. Three Chromium checks, five frontend transport tests, TypeScript checking and the Vite build passed.
+- Remediation verification: 653 Python regression tests passed, including 91 focused cases in the availability, tenant and OWNER API suites. Five Chromium checks, five frontend transport tests, TypeScript checking and the Vite build passed.
+- BFCache recovery defers session and tenant revalidation until a pending authentication action settles. Chromium tests simulate persisted events during successful and failed logout. Back/Forward through the supported launcher passed with `pageshow.persisted=false` in both directions.
 - Full CUSTOMER checkout and OWNER management UI remain future milestones.
 
 ## 2. Current Verified State
