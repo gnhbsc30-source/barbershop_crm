@@ -10,13 +10,16 @@
 }
 body { margin: 0; }
 main { max-inline-size: 72rem; margin-inline: auto; padding: 1.5rem; }
-form { display: grid; gap: .75rem; max-inline-size: 26rem; }
+form { display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; max-inline-size: 26rem; }
+form input { min-inline-size: 0; }
 button, input, select { font: inherit; min-block-size: 44px; }
 button { color: var(--cream); background: var(--charcoal); padding-inline: 1rem; border: 2px solid var(--charcoal); border-radius: .25rem; }
 button:disabled { opacity: .65; }
 :focus-visible { outline: 3px solid var(--leather); outline-offset: 3px; }
 .restoring #root { visibility: hidden; }
 .site-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; border-block-end: 2px solid var(--brass); }
+.site-header h1 { flex: 1 1 12rem; min-inline-size: 0; overflow-wrap: anywhere; }
+.site-header button { flex: 0 0 auto; }
 nav { display: flex; flex-wrap: wrap; gap: 1rem; padding-block: 1rem; }
 a { color: var(--leather); text-underline-offset: .2em; }
 fieldset { border: 1px solid var(--leather); margin-block: 1rem; padding: .75rem; }

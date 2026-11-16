@@ -129,3 +129,214 @@ def test_chromium_web_foundation(two_businesses, monkeypatch):
             assert client.get("/api/missing").status_code == 404
         finally:
             chromium.close()
+
+
+def test_cross_tab_revalidation_and_long_branding(two_businesses):
+    from types import MappingProxyType
+
+    from playwright.sync_api import expect, sync_playwright
+
+    from app.services.authentication import IdentityReference, hash_access_secret
+    from test_auth_api import execute
+
+    path, codes = two_businesses
+    foreign_selector, foreign_secret = "z" * 16, "v" * 43
+    long_hebrew = "א" * 120
+    mixed_name = "אבג" * 15 + "English" * 9 + "מספרה"
+    execute(path, "UPDATE businesses SET display_name = ? WHERE id = 2", (long_hebrew,))
+    # Change the first business only after startup so fixture integrity is still checked.
+    with browser() as client, sync_playwright() as playwright:
+        execute(path, "UPDATE businesses SET display_name = ? WHERE id = 1", (mixed_name,))
+        execute(path, "INSERT INTO customers (id,business_id,name,customer_type) VALUES (20,2,'Synthetic B','REGISTERED')")
+        execute(path, """INSERT INTO customer_accounts (id,business_id,customer_id,username,password_hash)
+                         VALUES (2,2,20,?,?)""", (foreign_selector, hash_access_secret(foreign_secret)))
+        app.state.auth_identities = MappingProxyType({
+            **app.state.auth_identities, foreign_selector: IdentityReference("customer_account", 2, 2),
+        })
+        large_id = 9007199254740993
+        execute(path, """INSERT INTO services (id,business_id,name,default_duration_minutes,default_price)
+                         VALUES (?,1,'Large synthetic service',30,10)""", (large_id,))
+        execute(path, "INSERT INTO staff_services (business_id,staff_id,service_id) VALUES (1,1,?)", (large_id,))
+        chromium = playwright.chromium.launch()
+        try:
+            context = chromium.new_context(viewport={"width": 320, "height": 800})
+            paths = []
+            failed_logout = False
+            hold_catalog = False
+            held_catalogs = []
+
+            def relay(route):
+                request = route.request
+                url = urlsplit(request.url)
+                if url.netloc != "127.0.0.1:8000":
+                    route.abort()
+                    return
+                endpoint = url.path + (f"?{url.query}" if url.query else "")
+                paths.append(endpoint)
+                if endpoint == "/api/v1/auth/session" and failed_logout:
+                    route.fulfill(status=503, json={"error": {"code": "TEST_UNAVAILABLE"}})
+                    return
+                response = client.request(request.method, endpoint, headers=request.all_headers(),
+                                          content=request.post_data_buffer, follow_redirects=False)
+                client.cookies.clear()
+                if hold_catalog and endpoint == "/api/v1/customer/services":
+                    held_catalogs.append((route, response))
+                    return
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+            context.route("**/*", relay)
+            first, second = context.new_page(), context.new_page()
+
+            def visit(page, endpoint):
+                return page.goto(DEVELOPMENT_ORIGIN + endpoint)
+
+            def sign_in(page, code):
+                page.get_by_label("קוד גישה").fill(code)
+                page.get_by_role("button", name="כניסה", exact=True).click()
+
+            def logout(page):
+                page.get_by_role("button", name="יציאה").click()
+                expect(page.get_by_label("קוד גישה")).to_be_visible()
+
+            visit(first, "/b/first/book")
+            sign_in(first, codes["CUSTOMER"])
+            service = first.get_by_role("checkbox", name="Large synthetic service")
+            expect(service).to_be_visible()
+            service.check()
+            first.get_by_role("button", name="לבחירת צוות ויום").click()
+            expect(first.get_by_label("איש צוות")).to_be_visible()
+            assert f"/api/v1/customer/staff?service_id={large_id}" in paths
+            visit(second, "/b/first")
+            expect(second.get_by_role("button", name="יציאה")).to_be_visible()
+            logout(second)
+            expect(first.get_by_label("קוד גישה")).to_be_visible()
+            expect(service).to_have_count(0)
+
+            sign_in(first, codes["CUSTOMER"])
+            expect(service).to_be_visible()
+            # Replace the shared cookie using the same login route, while the
+            # first tab has a catalog response pending under the old identity.
+            hold_catalog = True
+            with first.expect_request(lambda request: request.url.endswith("/customer/services")):
+                first.reload(wait_until="domcontentloaded")
+            def replace_in_second(code):
+                status = second.evaluate("""async code => {
+                  const response = await fetch('/api/v1/auth/dev-session', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json', 'X-CSRF-Protection': '1'},
+                    body: JSON.stringify({access_code: code})
+                  });
+                  return response.status;
+                }""", code)
+                assert status == 200
+                first.bring_to_front()
+                first.evaluate("window.dispatchEvent(new Event('focus'))")
+
+            replace_in_second(codes["OWNER"])
+            expect(first.get_by_role("alert")).to_contain_text("אין הרשאה")
+            assert held_catalogs
+            from playwright.sync_api import Error
+            for route, response in held_catalogs:
+                try:
+                    route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+                except Error as error:
+                    if "interception" not in str(error).lower() and "invalid" not in str(error).lower():
+                        raise
+            expect(service).to_have_count(0)
+            hold_catalog = False
+
+            replace_in_second(foreign_selector + "." + foreign_secret)
+            expect(first.get_by_role("alert")).to_contain_text("החיבור אינו מתאים")
+            expect(service).to_have_count(0)
+            visit(second, "/b/other/book")
+            expect(second.get_by_role("heading", level=1)).to_have_text(long_hebrew)
+            expect(second.locator("h1 bdi")).to_have_text(long_hebrew)
+            for zoom in (1, 2):
+                second.evaluate("zoom => { document.documentElement.style.zoom = zoom; }", zoom)
+                assert second.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                button = second.get_by_role("button", name="יציאה")
+                button.focus()
+                expect(button).to_be_focused()
+            failed_logout = True
+            second.keyboard.press("Enter")
+            expect(second.get_by_role("alert")).to_contain_text("היציאה נכשלה")
+            expect(second.get_by_role("status")).to_contain_text("האזור האישי מוסתר")
+            expect(second.get_by_role("button", name="יציאה")).to_be_enabled()
+            failed_logout = False
+            logout(second)
+            expect(first.get_by_label("קוד גישה")).to_be_visible()
+
+            visit(first, "/b/first")
+            expect(first.locator("h1 bdi")).to_have_text(mixed_name)
+            sign_in(first, codes["OWNER"])
+            expect(first.get_by_role("link", name="יומן")).to_be_visible()
+            for zoom in (1, 2):
+                first.evaluate("zoom => { document.documentElement.style.zoom = zoom; }", zoom)
+                assert first.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                button = first.get_by_role("button", name="יציאה")
+                button.focus()
+                expect(button).to_be_focused()
+        finally:
+            chromium.close()
+
+
+def test_chromium_through_supported_launcher(two_businesses):
+    import os
+    import socket
+    import subprocess
+    import sys
+    from time import monotonic, sleep
+    from urllib.error import URLError
+    from urllib.request import urlopen
+    from zoneinfo import ZoneInfo
+
+    import pytest
+    from playwright.sync_api import expect, sync_playwright
+
+    with socket.socket() as probe:
+        try:
+            probe.bind(("127.0.0.1", 8000))
+        except OSError:
+            pytest.skip("Port 8000 is occupied or loopback binding is unavailable")
+    path, codes = two_businesses
+    env = {**os.environ, "DATABASE_PATH": str(path), "ENVIRONMENT": "development",
+           "TZ": "Asia/Jerusalem", "WEB_CONCURRENCY": "1", "BARBERSHOP_DEV_SLUGS": '{"first":1,"other":2}'}
+    with subprocess.Popen([sys.executable, "-m", "app.dev_server"], env=env) as server:
+        try:
+            deadline = monotonic() + 10
+            while monotonic() < deadline and server.poll() is None:
+                try:
+                    with urlopen(DEVELOPMENT_ORIGIN + "/health", timeout=0.5) as response:
+                        if response.status == 200:
+                            break
+                except URLError:
+                    sleep(0.1)
+            else:
+                pytest.fail("Supported development launcher did not start")
+            with sync_playwright() as playwright:
+                chromium = playwright.chromium.launch()
+                try:
+                    page = chromium.new_page()
+                    page.goto(DEVELOPMENT_ORIGIN + "/b/first/book")
+                    page.get_by_label("קוד גישה").fill(codes["CUSTOMER"])
+                    page.get_by_role("button", name="כניסה", exact=True).click()
+                    expect(page.get_by_role("checkbox", name="Haircut")).to_be_visible()
+                    page.reload()
+                    expect(page.get_by_role("checkbox", name="Haircut")).to_be_visible()
+                    page.get_by_role("checkbox", name="Haircut").check()
+                    page.get_by_role("button", name="לבחירת צוות ויום").click()
+                    day = datetime.now(ZoneInfo("Asia/Jerusalem")).date() + timedelta(days=1)
+                    while day.weekday() in (4, 5):
+                        day += timedelta(days=1)
+                    page.get_by_label("תאריך").fill(day.isoformat())
+                    page.get_by_label("איש צוות").select_option("1")
+                    expect(page.get_by_role("radio", name="09:00", exact=True)).to_be_visible()
+                    page.goto(DEVELOPMENT_ORIGIN + "/b/other/book")
+                    expect(page.get_by_role("alert")).to_contain_text("החיבור אינו מתאים")
+                    page.get_by_role("button", name="יציאה").click()
+                    expect(page.get_by_label("קוד גישה")).to_be_visible()
+                finally:
+                    chromium.close()
+        finally:
+            server.terminate()
+            server.wait(timeout=5)

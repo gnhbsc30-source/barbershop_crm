@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import type {FormEvent} from 'react';
+import {flushSync} from 'react-dom';
 import {createRoot} from 'react-dom/client';
 import {api, ApiError} from './api';
 import type {Session} from './api';
@@ -24,6 +25,7 @@ function App() {
   const base = '/b/' + encodeURIComponent(slug);
   const restoreRequest = useRef<AbortController | null>(null);
   const actionPending = useRef(false);
+  const sessionChannel = useRef<BroadcastChannel | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const loseSession = useCallback(() => {
     setLogoutPending(false);
@@ -60,23 +62,34 @@ function App() {
   }, [slug, session, logoutPending, loseSession]);
 
   useEffect(() => {
-    const restore = () => {
+    const restore = (immediate = false) => {
       if (actionPending.current) return;
       restoreRequest.current?.abort();
       const controller = new AbortController();
       restoreRequest.current = controller;
-      setSession(undefined);
-      setTenant(undefined);
+      const clearProtectedState = () => {
+        setSession(undefined);
+        setTenant(undefined);
+      };
+      if (immediate) flushSync(clearProtectedState);
+      else clearProtectedState();
       api<Session>('/auth/me', {signal: controller.signal}).then(
         value => { if (!controller.signal.aborted) setSession(value); },
         failure => {
           if (controller.signal.aborted) return;
           if (!(failure instanceof ApiError && failure.status === 401)) setError('לא ניתן לבדוק את מצב הכניסה.');
-          setSession(null);
+          loseSession();
         },
       );
     };
-    const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) restore(); };
+    const revalidate = () => restore(true);
+    const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) revalidate(); };
+    const onVisibility = () => { if (document.visibilityState === 'visible') revalidate(); };
+    const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('barbershop-session') : null;
+    sessionChannel.current = channel;
+    if (channel) channel.onmessage = event => {
+      if (event.data === 'changed') revalidate();
+    };
     const onPageHide = (event: PageTransitionEvent) => {
       if (event.persisted) {
         restoreRequest.current?.abort();
@@ -92,13 +105,19 @@ function App() {
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('pageshow', onPageShow);
     window.addEventListener('popstate', onPopState);
+    window.addEventListener('focus', revalidate);
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       restoreRequest.current?.abort();
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('pageshow', onPageShow);
       window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('focus', revalidate);
+      document.removeEventListener('visibilitychange', onVisibility);
+      channel?.close();
+      sessionChannel.current = null;
     };
-  }, []);
+  }, [loseSession]);
 
   useEffect(() => { document.documentElement.classList.remove('restoring'); }, [session]);
 
@@ -138,6 +157,7 @@ function App() {
         headers: {'Content-Type': 'application/json', 'X-CSRF-Protection': '1'},
         body: JSON.stringify({access_code: accessCode}),
       }));
+      sessionChannel.current?.postMessage('changed');
     } catch (failure) {
       if (failure instanceof ApiError && failure.status === 429) {
         setRetryDelay(failure.retryAfter);
@@ -162,9 +182,12 @@ function App() {
     try {
       await api('/auth/session', {method: 'DELETE', headers: {'X-CSRF-Token': session.csrf_token}});
       loseSession();
-      setLogoutPending(false);
+      sessionChannel.current?.postMessage('changed');
     } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 401) loseSession();
+      if (failure instanceof ApiError && failure.status === 401) {
+        loseSession();
+        sessionChannel.current?.postMessage('changed');
+      }
       else setError('היציאה נכשלה. ניתן לנסות שוב.');
     } finally {
       actionPending.current = false;
