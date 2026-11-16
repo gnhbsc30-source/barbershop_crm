@@ -1,0 +1,36 @@
+:root {
+  --charcoal: #191b1a;
+  --leather: #624735;
+  --brass: #b99759;
+  --cream: #f4ebdd;
+  --green: #697b68;
+  color: var(--charcoal);
+  background: var(--cream);
+  font: 1rem/1.55 Arial, sans-serif;
+}
+body { margin: 0; }
+main { max-inline-size: 72rem; margin-inline: auto; padding: 1.5rem; }
+form { display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; max-inline-size: 26rem; }
+form input { min-inline-size: 0; }
+button, input, select { font: inherit; min-block-size: 44px; }
+button { color: var(--cream); background: var(--charcoal); padding-inline: 1rem; border: 2px solid var(--charcoal); border-radius: .25rem; }
+button:disabled { opacity: .65; }
+:focus-visible { outline: 3px solid var(--leather); outline-offset: 3px; }
+.restoring #root { visibility: hidden; }
+.site-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; border-block-end: 2px solid var(--brass); }
+.site-header h1 { flex: 1 1 12rem; min-inline-size: 0; overflow-wrap: anywhere; }
+.site-header button { flex: 0 0 auto; }
+nav { display: flex; flex-wrap: wrap; gap: 1rem; padding-block: 1rem; }
+a { color: var(--leather); text-underline-offset: .2em; }
+fieldset { border: 1px solid var(--leather); margin-block: 1rem; padding: .75rem; }
+.option, .slot { display: flex; align-items: center; gap: .5rem; min-block-size: 44px; cursor: pointer; }
+input[type=checkbox], input[type=radio] { min-block-size: auto; accent-color: var(--leather); }
+.filters { display: grid; gap: .75rem; margin-block: .75rem; }
+.filters label { display: grid; gap: .25rem; min-inline-size: 0; }
+.filters input, .filters select { min-inline-size: 0; }
+.slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr)); gap: .5rem; }
+.slot { border: 1px solid var(--leather); border-radius: .25rem; padding-inline: .5rem; }
+.slot:has(:checked) { border-width: 2px; padding-inline: calc(.5rem - 1px); font-weight: 700; }
+@media (min-width: 768px) {
+  .filters { grid-template-columns: repeat(2, minmax(0, 16rem)); }
+}

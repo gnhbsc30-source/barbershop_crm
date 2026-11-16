@@ -1,13 +1,18 @@
 """Authenticated customer routes. No SQL or scheduling rules."""
 
+from datetime import date
+import re
+
 from fastapi import APIRouter, Depends, Request
 
-from app.api.auth_dependencies import AuthHTTPError, require_customer
+from app.api.auth_dependencies import AuthHTTPError, SESSION_COOKIE, require_customer
 from app.api.booking_dependencies import execute_booking, positive_query, query_keys, require_customer_post, read_customer_body, search_owner
 from app.api.customer_booking_models import (
     SearchRequest, BookingRequest, SelectionRequest, CatalogResponse, StaffResponse,
     SearchResponse, AppointmentView, HistoryResponse, request_contract,
 )
+from app.core.slot_admission import SlotsBusy
+from app.services.available_slots import available_slots
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
@@ -28,6 +33,40 @@ def staff(request: Request, context=Depends(require_customer)):
     if not 1 <= len(ids) <= 20 or len(set(ids)) != len(ids):
         raise AuthHTTPError(422, "INVALID_REQUEST")
     return execute_booking(request, context, lambda service: service.staff(ids), response_model=StaffResponse)
+
+
+@router.get("/available-slots")
+def daily_slots(request: Request, context=Depends(require_customer)):
+    # The longest canonical query (20 signed-64-bit IDs) fits below this bound.
+    if len(request.scope["query_string"]) > 1024:
+        raise AuthHTTPError(422, "INVALID_REQUEST")
+    query_keys(request, allowed=("date", "staff_id", "service_id"), repeated=("service_id",))
+    query = request.query_params
+    value = query.get("date", "")
+    try:
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+            raise ValueError()
+        day = date.fromisoformat(value)
+    except ValueError:
+        raise AuthHTTPError(422, "INVALID_REQUEST") from None
+    values = query.getlist("service_id")
+    staff = query.get("staff_id", "")
+    if not 1 <= len(values) <= 20 or any(value.startswith("0") for value in [staff, *values]):
+        raise AuthHTTPError(422, "INVALID_REQUEST")
+    ids = [positive_query(value) for value in values]
+    if len(set(ids)) != len(ids):
+        raise AuthHTTPError(422, "INVALID_REQUEST")
+    staff_id = positive_query(staff)
+
+    def list_slots(customer):
+        binding = request.app.state.auth_sessions.binding_for(request.cookies.get(SESSION_COOKIE))
+        try:
+            with request.app.state.slot_admission.admit(binding):
+                return available_slots(customer, day, staff_id, ids)
+        except SlotsBusy:
+            raise AuthHTTPError(429, "AVAILABLE_SLOTS_BUSY", headers={"Retry-After": "1"}) from None
+
+    return execute_booking(request, context, list_slots, scheduling=True)
 
 
 @router.post("/booking-searches", response_model=SearchResponse, openapi_extra=request_contract(SearchRequest))

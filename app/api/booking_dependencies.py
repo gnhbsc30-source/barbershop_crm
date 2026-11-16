@@ -10,6 +10,7 @@ from app.api.auth_dependencies import AuthHTTPError, SESSION_COOKIE, require_aut
 from app.core.auth_sessions import SessionError
 from app.core.booking_search_ownership import SearchAdmissionError, SearchOwner
 from app.core import booking_clock
+from app.api.tenant_context import check_tenant_header
 from app.db import database
 from app.services.appointments import AppointmentBookingError
 from app.services.alternative_selection import AlternativeSelectionError
@@ -78,6 +79,7 @@ def execute_booking(request, context, operation, scheduling=False, response_mode
         if fresh != context:
             raise AuthHTTPError(401, "UNAUTHENTICATED", clear_cookie=True)
         with closing(database.open_development_database(request.app.state.auth_database_path)) as connection:
+            check_tenant_header(request, connection, fresh.principal)
             if scheduling:
                 from app.db.repositories import get_booking_business
                 business = get_booking_business(connection, fresh.principal.business_id)
