@@ -1,7 +1,17 @@
 # Barbershop CRM — Conversation Context Archive
 # Curated recovery context, not a literal transcript of every chat message.
 
-## Current Verified Post-Merge Checkpoint — 2026-11-15
+## Current Verified Feature Checkpoint — 2026-11-16
+
+Stage: 30B.3 Owner Calendar & Basic Appointment Management
+Branch: feature/stage-30b3-owner-management-api
+Verified implementation and remediation HEAD: 0d528faed4b9155a0be8f39dcc25013adc088ac1
+Verified main: ffe63295d968a0ce8b9526b3640170ed3a266029
+Audit: READY FOR PR. Full regression: 632 passed, 0 failed. Focused audit: 328 passed.
+Stage 30B.3 is implemented on the feature branch. Merge remains pending.
+Git history records the subsequent documentation-only checkpoint commit.
+
+## Historical Stage 30B.2 Post-Merge Checkpoint — 2026-11-15
 
 Project: /Users/aminadavyamin/Documents/Projects/barbershop_crm
 Branch: main
@@ -643,8 +653,8 @@ Limits and exclusions:
 - Local-only, single-process in-memory sessions/rate limits/selection contexts; no restart durability or multi-worker support. Production auth, HTTPS, shared atomic storage and persistent migrations remain deferred.
 - Trusted local OS/filesystem boundary; supported launcher safeguards do not certify arbitrary ASGI configurations. Cross-resource crash atomicity and retroactive revocation of in-flight authorized work are not guaranteed.
 - Non-blocking hardening: Argon2 work-factor bounds, slow-body/concurrent-request resource controls, safe unexpected-error diagnostics and additional logout/rotation race coverage. Stage 29 timezone/DST, integer settings and lazy selection-context cleanup notes remain.
-- Stage 30B.1 supplied authentication. Customer booking HTTP and search ownership were added in Stage 30B.2 and are now on main. Owner APIs, frontend, cancellation/rescheduling, ANY Alternative Discovery and AI/Chat remain deferred.
-- Future owner edits are staff/date/time only; services, customer identity, manual price and notes changes are excluded from MVP rescheduling. Cancellation, rescheduling, owner-override and repricing rules still need approval; no new policy is inferred.
+- Stage 30B.1 supplied authentication. Customer booking HTTP and search ownership were added in Stage 30B.2 and are now on main. Stage 30B.3 adds owner calendar and basic management on its feature branch. Frontend, cancellation, broader rescheduling, ANY Alternative Discovery and AI/Chat remain deferred.
+- Owner edits on the Stage 30B.3 feature branch are staff/date/time only; services, customer identity, manual price and notes changes are excluded from MVP rescheduling. Cancellation, rescheduling, owner-override and repricing rules still need approval; no new policy is inferred.
 
 ## Stage 30B.2 — Customer Booking API (Merged and Verified)
 
@@ -676,6 +686,34 @@ state, lazy expiration, and the Asia/Jerusalem naive scheduling clock prerequisi
 remain. No schema migration, frontend, owner calendar, cancellation, rescheduling
 or AI/Chat was added.
 
+## Stage 30B.3 — Owner Calendar & Basic Appointment Management (Merge Pending)
+
+Under /api/v1/owner: GET /appointments, GET /appointments/{appointment_id},
+GET /customers, GET /booking-options, POST /appointment-quotes,
+POST /appointments and PATCH /appointments/{appointment_id}.
+
+Fresh OWNER authorization supplies tenant scope. Every POST and PATCH uses
+session-bound CSRF and rejects duplicate JSON members. Calendar pages use
+half-open date bounds, staff filtering and scope-bound keyset pagination.
+Items are batched in one read snapshot. Calendar shows customer names. Only
+customer lookup and appointment detail expose phone.
+
+Owner bookings revalidate exact ILS confirmation. Existing customers must be
+active. A GUEST and its booking commit together after response preparation.
+Guests receive no account or credentials. Development startup accepts accountless
+guests while preserving seed, account and manifest checks.
+
+Future BOOKED appointments can move by staff/date/time with a strong If-Match
+ETag and a strictly advancing revision. Booked names, prices and durations stay
+intact. No-op edits preserve the revision. Invalid or exhausted revisions fail
+with a sanitized configuration error. ADR-045 through ADR-047 record the contract.
+
+The supported MVP remains local and single-process, with in-memory sessions and
+searches, naive Asia/Jerusalem scheduling and deferred DST hardening. A move can
+shift a row across calendar pages. A disconnect can interrupt delivery after commit.
+Cancellation, status changes, service replacement, repricing, account linking,
+frontend and AI remain deferred.
+
 ## Important Technical Definitions
 
 Repository:
@@ -701,10 +739,8 @@ one isolated business/customer organization inside the SaaS.
 
 ## Current Next Step
 
-Stage 30B.2 is merged and verified. Stage 30B.3 has not started. Await separate
-architectural approval before starting the next milestone. Future owner editing
-is limited to staff/date/time. Lifecycle, owner overrides and repricing policies
-still require approval.
+Stage 30B.3 has passed its final audit and awaits architectural PR review and
+separate merge approval. Stage 30B.4 has not started.
 
 ## Context Safety Rule
 

@@ -128,10 +128,20 @@ def validate_development_data(path: Path, *, environment: str) -> dict[str, Iden
     identities = load_provisioned_identities(path, environment=environment)
     path = _guard_path(path, environment)
     try:
-        with closing(database.open_development_database(path)) as connection:
+        with closing(database.open_development_database(path)) as connection, database.read_snapshot(connection):
             manifest = _read_manifest(path)
             _validate_references(connection, manifest)
-            if repositories.get_development_fixture_snapshot(connection, manifest["business_id"]) != manifest["fixture"]:
+            actual = repositories.get_development_fixture_snapshot(connection, manifest["business_id"])
+            expected = manifest["fixture"]
+            seed_ids = {row["id"] for row in expected["customers"]}
+            linked_ids = {row["customer_id"] for row in actual["customer_accounts"]}
+            for row in actual["customers"]:
+                if row["id"] not in seed_ids and (
+                    row["customer_type"] != "GUEST" or row["id"] in linked_ids
+                ):
+                    raise DevelopmentDataError("DEVELOPMENT_DATA_INCONSISTENT")
+            actual["customers"] = [row for row in actual["customers"] if row["id"] in seed_ids]
+            if actual != expected:
                 raise DevelopmentDataError("DEVELOPMENT_DATA_INCONSISTENT")
     except (sqlite3.Error, ValueError, KeyError, TypeError, OSError):
         raise DevelopmentDataError("DEVELOPMENT_DATA_INCONSISTENT") from None

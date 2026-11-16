@@ -5,13 +5,13 @@
 
 ## 1. Current Phase
 
-**Phase:** Two-sided local development MVP → Customer Booking API
+**Phase:** Two-sided local development MVP → Owner Calendar & Basic Appointment Management
 
-**Current milestone:** Stage 30B.2 — Customer Booking API is implemented, audited, merged into `main` through [PR #4](https://github.com/gnhbsc30-source/barbershop_crm/pull/4), and verified with **560 passed, 0 failed**.
+**Current milestone:** Stage 30B.3 is implemented and audited on the feature branch. Merge into `main` remains pending.
 
-**Audit checkpoint:** Booking response preparation, post-commit selection cleanup and unsupported stored price types were corrected. Full regression: **560 passed, 0 failed**. Audit verdict: **READY WITH NOTES** for the local development MVP.
+**Audit checkpoint:** **READY FOR PR**, with **632 passed, 0 failed**. Owner mutations now reject duplicate JSON members. An exhausted stored revision returns a sanitized configuration error and leaves the appointment unchanged.
 
-**Next steps:** Stage 30B.3 has not started. The next milestone requires separate architectural approval.
+**Next steps:** Review the Stage 30B.3 PR and obtain separate merge approval. Stage 30B.4 has not started.
 
 **STOP RULE:** Do not start the next milestone until the current milestone is explicitly considered complete and the user agrees to continue.
 
@@ -31,22 +31,25 @@ Physically present directories containing tracked files:
 - `docs/`
 - `tests/`
 
-Tracked application entry point: `app/main.py` (thin FastAPI composition root, authentication lifespan, auth and customer routers, middleware, and `/health`). Development tools are `app/dev_data.py` and `app/dev_server.py`.
+Tracked application entry point: `app/main.py` (thin FastAPI composition root, authentication lifespan, auth, customer and owner routers, middleware, and `/health`). Development tools are `app/dev_data.py` and `app/dev_server.py`.
 
 Planned structure only; these folders are currently absent and are not tracked:
 - `app/ai/`
 - `frontend/admin/`, `frontend/customer/`
 - `knowledge/`, `scripts/`
 
-The planned folders do not represent implemented features. `app/api/` contains development authentication and the Customer Booking API on `main`. The owner calendar API remains deferred.
+The planned folders do not represent implemented features. `app/api/` contains development authentication and the Customer Booking API on `main`. The OWNER calendar and basic appointment-management API is implemented on the Stage 30B.3 feature branch.
 
 Latest verified results:
-- **560 tests passed, 0 failed** in the full post-merge regression on 2026-11-15.
+- **632 tests passed, 0 failed** for Stage 30B.3. The focused final audit passed **328 tests**.
+- Historical Stage 30B.2 post-merge regression on 2026-11-15: **560 passed, 0 failed**.
 - **249 focused tests passed** at the audit remediation checkpoint.
 - Tests use isolated temporary databases and cover concurrent booking and selection, transactional rollback, tenant isolation, exact money, and Stage 27–30B.1 regressions.
 
 Git checkpoint:
-- Current branch: `main`. Verified merge commit: `7119d95f50325812ea07b443997eca478d5d075b`. The regular two-parent merge preserved all seven feature commits.
+- Current branch: `feature/stage-30b3-owner-management-api`. Verified implementation and remediation HEAD before the documentation commit: `0d528faed4b9155a0be8f39dcc25013adc088ac1`.
+- Verified local and remote `main`: `ffe63295d968a0ce8b9526b3640170ed3a266029`.
+- Stage 30B.2 merge commit: `7119d95f50325812ea07b443997eca478d5d075b`. The regular two-parent merge preserved all seven feature commits.
 - Retained feature branch: `feature/stage-30b2-customer-booking-api`. Reviewed PR head: `6de4a2d661a685c1a9e894dbf93360cb93d1759f`.
 - Verified implementation/remediation HEAD before the documentation commit: `6abf95ea9918df3bf7f0a58e0eaa5235266803d1`
 - Historical pre-merge `main`: `3f66b1c37127d7cec8b0db9616cde29b163cc3ae` (Stage 30B.1 post-merge documentation checkpoint).
@@ -58,7 +61,7 @@ Git checkpoint:
 - Historical implementation HEAD: `6091baf8caea0aa005bba4e7271b285368da162d`; reviewed documentation/PR head: `47bdcea7f9fcf90832264ed652d35bb88d682a5f`.
 - Historical pre-merge `main`: `5846451000e8dc2ef75cb9605c63613295ef353e` (Stage 28 baseline plus documentation).
 - GitHub: https://github.com/gnhbsc30-source/barbershop_crm
-- Local and remote `main` were clean and synchronized at merge verification. Git history records the subsequent documentation-only checkpoint commit.
+- Local and remote feature HEADs were synchronized and the working tree was clean at audit verification. Git history records the subsequent documentation-only checkpoint commit.
 
 ## 3. What Has Been Completed
 
@@ -253,6 +256,26 @@ All routes below are under `/api/v1/customer`.
 - History reads stored booked service names, prices and durations in a consistent snapshot. Catalog changes leave those booked item snapshots intact.
 - Both booking paths prepare and render the HTTP 201 response and Location inside the write transaction. A preparation failure rolls back. After commit, alternative cleanup failures are logged generically and success is preserved. Failed context expiry leaves the claim closed; cleanup is lazy and has no cross-resource crash atomicity. Delivery after commit can still be interrupted.
 
+### Stage 30B.3 — Owner Calendar & Basic Appointment Management (merge pending)
+
+All routes below use `/api/v1/owner`.
+
+| Endpoint | Capability |
+| --- | --- |
+| `GET /appointments` | Tenant calendar with optional staff filter and keyset pagination |
+| `GET /appointments/{appointment_id}` | Tenant-scoped appointment detail and ETag |
+| `GET /customers` | Active customer picker with bounded name-prefix or exact-phone lookup |
+| `GET /booking-options` | Active services and eligible staff with ordered quotes when filtered |
+| `POST /appointment-quotes` | Non-reserving SPECIFIC-staff availability and confirmation terms |
+| `POST /appointments` | Exact-confirmed booking for an existing customer or a new GUEST |
+| `PATCH /appointments/{appointment_id}` | Conditional staff/date/time move for a future BOOKED appointment |
+
+- All routes require fresh OWNER authorization. Tenant scope comes from the principal. Every POST and PATCH requires session-bound CSRF and rejects duplicate JSON members.
+- The calendar uses half-open ranges up to 31 days and scope-bound keyset cursors ordered by start and appointment ID. It includes historical appointments for inactive staff and batches booked items inside one read snapshot. Calendar rows show customer names. Phone appears only in the customer picker and detail.
+- Exact ILS confirmation is revalidated with booking policy and availability under the write lock. Existing customers must be active. GUEST creation, exact tenant phone duplicate checks, appointment and item writes, and rendering HTTP 201, Location and ETag share one transaction. Failure rolls back all writes. Guests have no account or credentials and persist across a development restart. Seed and account validation still fail closed.
+- Moves require a strong ETag in If-Match. Actual moves advance the persisted revision monotonically, check the exact interval with only the moved appointment excluded, and preserve booked service names, durations, prices and totals. Inactive booked services block moves. A valid no-op keeps the revision. Invalid or exhausted revisions fail with a sanitized configuration error.
+- The final audit verified rollback at write and response-preparation boundaries, concurrent booking and edits, conditional revisions, tenant isolation and development restart behavior. See ADR-045 through ADR-047.
+
 ### Deferred capabilities and production limitations
 - SQLite remains temporary; no production DB migration or persistent migration infrastructure. Schema changes do not upgrade existing databases automatically.
 - In-memory selection storage/claims are single-process and require the same store instance. Multi-worker deployment needs shared atomic storage; there is no restart durability or atomic transaction spanning booking and context consumption.
@@ -262,7 +285,8 @@ All routes below are under `/api/v1/customer`.
 - Development authentication, customer resource authorization and session-bound search ownership are on `main`.
 - Sessions/rate limits and selection contexts are single-process, non-durable state; restart loses state. Production/shared atomic storage, HTTPS/secure-cookie deployment and production identity management remain deferred. The supported local launcher, not arbitrary ASGI invocation, is the deployment contract.
 - Stored Argon2 work-factor bounds, slow-body/concurrent-request resource hardening, safe unexpected-error diagnostics, and additional logout/rotation races remain non-blocking hardening notes. No retroactive cancellation of already-authorized in-flight requests is guaranteed.
-- Deferred capabilities include ANY Alternative Discovery, owner calendar and management APIs, cancellation/rescheduling execution, frontend and AI/Chat.
+- Deferred capabilities include ANY Alternative Discovery, cancellation, status changes, customer rescheduling, service replacement, repricing, account linking, frontend and AI/Chat.
+- A move between calendar page requests can shift a row across the cursor. A network disconnection after commit can interrupt response delivery.
 
 ## 4. Important Architecture Decisions
 
@@ -307,8 +331,8 @@ The schema includes cancellation-policy data, but cancellation execution/API, cu
 `appointment_items.price` is the appointment's bound/current price.
 Historical product direction (repricing/notification flow is not implemented or a finalized Stage 30 contract): appointments more than one week away may receive the new price and customer notification; appointments within one week retain the old price. Final booking/rescheduling repricing policy still requires approval.
 
-### Future MVP owner editing boundary
-Approved scope is staff/date/time only. Services, customer identity, manual price and notes changes are excluded from MVP rescheduling. This is a scope decision, not implemented modification behavior; cancellation/rescheduling policies and owner override permissions remain to be agreed.
+### MVP owner editing boundary
+Approved scope is staff/date/time only. Services, customer identity, manual price and notes changes are excluded from MVP rescheduling. Stage 30B.3 implements this boundary on the feature branch. Cancellation, broader rescheduling policies and owner overrides remain deferred.
 
 ### Tenant isolation
 Every tenant-scoped operation must be authorized and scoped by `business_id`.
@@ -419,8 +443,6 @@ Still unresolved unless explicitly changed later:
 - timezone handling strategy for all scheduling flows
 - cancellation cutoffs/status transitions, rescheduling policy, owner overrides and final repricing behavior
 
-## 10. Post-Merge Checkpoint and Next Milestone
+## 10. Checkpoint and Next Milestone
 
-Stage 30B.2 post-merge verification is complete. ADR-042 through ADR-044 retain the approved authorization, confirmation and response-integrity decisions. Stage 30B.3 has not started. The next milestone requires separate architectural approval.
-
-Future customer and owner interfaces share the real backend and development database. Owner editing is scoped to staff/date/time only. Owner calendar and management APIs, cancellation, rescheduling, frontend and AI/Chat remain deferred.
+Stage 30B.2 remains merged and verified on `main`. Stage 30B.3 is ready for PR review on its feature branch, with merge pending. The next action is architectural merge review. Stage 30B.4 requires separate approval.

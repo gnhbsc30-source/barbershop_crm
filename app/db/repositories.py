@@ -682,6 +682,8 @@ def get_staff_appointments(
     staff_id: int,
     start_datetime: str,
     end_datetime: str,
+    *,
+    exclude_appointment_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """Return active appointments for a staff member overlapping a time range."""
     rows = connection.execute(
@@ -701,6 +703,7 @@ def get_staff_appointments(
           AND status != 'CANCELLED'
           AND start_datetime < ?
           AND end_datetime > ?
+          AND (? IS NULL OR id != ?)
         ORDER BY start_datetime
         """,
         (
@@ -708,6 +711,8 @@ def get_staff_appointments(
             staff_id,
             end_datetime,
             start_datetime,
+            exclude_appointment_id,
+            exclude_appointment_id,
         ),
     ).fetchall()
 
@@ -736,3 +741,81 @@ def get_business_settings(
     ).fetchone()
 
     return dict(row) if row else None
+
+
+def get_owner_appointment_rows(connection, business_id, *, limit=1, appointment_id=None,
+                               start=None, end=None, staff_id=None, after=None):
+    query = """
+        SELECT a.id AS appointment_id, a.staff_id, s.name AS staff_name,
+               a.customer_id, c.name AS customer_name, a.start_datetime,
+               a.end_datetime, a.status
+        """
+    if appointment_id is not None:
+        query += ", a.notes, a.updated_at, c.phone AS customer_phone"
+    query += """
+        FROM appointments AS a
+        JOIN staff AS s ON s.business_id = a.business_id AND s.id = a.staff_id
+        JOIN customers AS c ON c.business_id = a.business_id AND c.id = a.customer_id
+        WHERE a.business_id = ?
+        """
+    parameters = [business_id]
+    if appointment_id is not None:
+        query += " AND a.id = ?"
+        parameters.append(appointment_id)
+    else:
+        query += " AND a.start_datetime < ? AND a.end_datetime > ?"
+        parameters.extend((end, start))
+        if staff_id is not None:
+            query += " AND a.staff_id = ?"
+            parameters.append(staff_id)
+        if after is not None:
+            query += " AND (a.start_datetime, a.id) > (?, ?)"
+            parameters.extend(after)
+    query += " ORDER BY a.start_datetime, a.id LIMIT ?"
+    return [dict(row) for row in connection.execute(query, [*parameters, limit])]
+
+
+def get_owner_appointment_items(connection, business_id, appointment_ids):
+    if not appointment_ids:
+        return []
+    placeholders = ",".join("?" for _ in appointment_ids)
+    return [dict(row) for row in connection.execute(
+        f"""SELECT i.appointment_id, i.service_id, i.service_name, i.duration_minutes, i.price
+            FROM appointment_items AS i
+            JOIN appointments AS a ON a.business_id = i.business_id AND a.id = i.appointment_id
+            WHERE a.business_id = ? AND a.id IN ({placeholders})
+            ORDER BY i.appointment_id, i.id""", [business_id, *appointment_ids])]
+
+
+def list_owner_customers(connection, business_id, *, limit, after_id, name_prefix, phone):
+    query = """SELECT id AS customer_id, name, phone FROM customers
+               WHERE business_id = ? AND is_active = 1 AND id > ?"""
+    parameters = [business_id, after_id]
+    if name_prefix is not None:
+        query += " AND substr(name, 1, length(?)) = ? COLLATE NOCASE"
+        parameters.extend((name_prefix, name_prefix))
+    if phone is not None:
+        query += " AND phone = ?"
+        parameters.append(phone)
+    query += " ORDER BY id LIMIT ?"
+    return [dict(row) for row in connection.execute(query, [*parameters, limit])]
+
+
+def list_owner_booking_catalog(connection, business_id, limit):
+    services = connection.execute(
+        """SELECT id AS service_id, name FROM services
+           WHERE business_id = ? AND is_active = 1 ORDER BY id LIMIT ?""",
+        (business_id, limit))
+    staff = connection.execute(
+        """SELECT id AS staff_id, name AS staff_name FROM staff
+           WHERE business_id = ? AND is_active = 1 ORDER BY id LIMIT ?""",
+        (business_id, limit))
+    return [dict(row) for row in services], [dict(row) for row in staff]
+
+
+
+def update_owner_appointment_schedule(connection, business_id, appointment_id, *, staff_id, start, end, revision):
+    connection.execute(
+        """UPDATE appointments SET staff_id = ?, start_datetime = ?, end_datetime = ?, updated_at = ?
+           WHERE business_id = ? AND id = ?""",
+        (staff_id, start, end, revision, business_id, appointment_id))

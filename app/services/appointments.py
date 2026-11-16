@@ -267,6 +267,7 @@ class AppointmentService:
         allow_auto_assign: bool = False,
         confirmation: BookingConfirmation | None = None,
         before_commit: Callable[[AppointmentBookingResult], None] | None = None,
+        require_active_customer: bool = False,
     ) -> AppointmentBookingResult:
         """Book after validation and two availability checks.
 
@@ -303,59 +304,79 @@ class AppointmentService:
             start_datetime=requested_start,
         )
 
-        with transaction(self.connection) as connection:
-            if confirmation is not None:
-                # Re-resolve under the existing write lock. Nothing from the
-                # preflight quote may become a persisted confirmed snapshot.
-                requested_start, items = self.resolve(
-                    business_id=business_id, customer_id=customer_id, staff_id=staff_id,
-                    start_datetime=start_datetime, service_ids=service_ids,
-                )
-                actual = BookingConfirmation.from_items(items)
-                if actual != confirmation:
-                    raise AppointmentBookingError("BOOKING_QUOTE_CHANGED")
-                total_duration = actual.total_duration_minutes
-                total_price = float(format_cents(actual.total_price_cents))
-                requested_end = requested_start + timedelta(minutes=total_duration)
-                self._ensure_booking_policy(business_id=business_id, requested_start=requested_start)
-            self._ensure_available(
-                connection=connection,
-                business_id=business_id,
-                staff_id=staff_id,
-                service_ids=service_ids,
-                start_datetime=requested_start,
-                **({"expected_end": requested_end} if confirmation is not None else {}),
-            )
-            appointment_id = create_appointment(
-                connection=connection,
-                business_id=business_id,
-                customer_id=customer_id,
-                staff_id=staff_id,
-                start_datetime=requested_start.isoformat(),
-                end_datetime=requested_end.isoformat(),
-                notes=notes,
-                items=[
-                    {
-                        "service_id": item.service_id,
-                        "service_name": item.service_name,
-                        "duration_minutes": item.duration_minutes,
-                        "price": item.price,
-                    }
-                    for item in items
-                ],
+        with transaction(self.connection):
+            return self._book_in_transaction(
+                business_id=business_id, customer_id=customer_id, staff_id=staff_id,
+                start_datetime=start_datetime, service_ids=service_ids, notes=notes,
+                confirmation=confirmation, before_commit=before_commit,
+                require_active_customer=require_active_customer,
+                preflight=(requested_start, requested_end, items, total_duration, total_price),
             )
 
-            result = AppointmentBookingResult(
-                appointment_id=appointment_id,
-                staff_id=staff_id,
-                start_datetime=requested_start.isoformat(),
-                end_datetime=requested_end.isoformat(),
-                total_duration_minutes=total_duration,
-                total_price=total_price,
-                items=items,
+    def _book_in_transaction(
+        self, *, business_id, customer_id, staff_id, start_datetime, service_ids,
+        notes, confirmation, before_commit, require_active_customer, preflight=None,
+    ):
+        """Perform final validation and writes within the caller's write transaction."""
+        connection = self.connection
+        if require_active_customer:
+            customer = get_customer(connection, business_id, customer_id)
+            if not customer or not customer["is_active"]:
+                raise AppointmentBookingError("CUSTOMER_NOT_FOUND")
+        if confirmation is not None:
+            # Re-resolve under the existing write lock. Nothing from the
+            # preflight quote may become a persisted confirmed snapshot.
+            requested_start, items = self.resolve(
+                business_id=business_id, customer_id=customer_id, staff_id=staff_id,
+                start_datetime=start_datetime, service_ids=service_ids,
             )
-            if before_commit is not None:
-                before_commit(result)
+            actual = BookingConfirmation.from_items(items)
+            if actual != confirmation:
+                raise AppointmentBookingError("BOOKING_QUOTE_CHANGED")
+            total_duration = actual.total_duration_minutes
+            total_price = float(format_cents(actual.total_price_cents))
+            requested_end = requested_start + timedelta(minutes=total_duration)
+            self._ensure_booking_policy(business_id=business_id, requested_start=requested_start)
+        else:
+            requested_start, requested_end, items, total_duration, total_price = preflight
+        self._ensure_available(
+            connection=connection,
+            business_id=business_id,
+            staff_id=staff_id,
+            service_ids=service_ids,
+            start_datetime=requested_start,
+            **({"expected_end": requested_end} if confirmation is not None else {}),
+        )
+        appointment_id = create_appointment(
+            connection=connection,
+            business_id=business_id,
+            customer_id=customer_id,
+            staff_id=staff_id,
+            start_datetime=requested_start.isoformat(),
+            end_datetime=requested_end.isoformat(),
+            notes=notes,
+            items=[
+                {
+                    "service_id": item.service_id,
+                    "service_name": item.service_name,
+                    "duration_minutes": item.duration_minutes,
+                    "price": item.price,
+                }
+                for item in items
+            ],
+        )
+
+        result = AppointmentBookingResult(
+            appointment_id=appointment_id,
+            staff_id=staff_id,
+            start_datetime=requested_start.isoformat(),
+            end_datetime=requested_end.isoformat(),
+            total_duration_minutes=total_duration,
+            total_price=total_price,
+            items=items,
+        )
+        if before_commit is not None:
+            before_commit(result)
 
         return result
 
