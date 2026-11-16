@@ -7,11 +7,11 @@
 
 **Phase:** Two-sided local development MVP → Owner Calendar & Basic Appointment Management
 
-**Current milestone:** Stage 30B.3 is implemented and audited on the feature branch. Merge into `main` remains pending.
+**Current milestone:** Stage 30B.3 is implemented, audited, merged into `main` through [PR #5](https://github.com/gnhbsc30-source/barbershop_crm/pull/5), and verified.
 
 **Audit checkpoint:** **READY FOR PR**, with **632 passed, 0 failed**. Owner mutations now reject duplicate JSON members. An exhausted stored revision returns a sanitized configuration error and leaves the appointment unchanged.
 
-**Next steps:** Review the Stage 30B.3 PR and obtain separate merge approval. Stage 30B.4 has not started.
+**Next steps:** Stage 30B.4 has not started and requires separate architectural approval.
 
 **STOP RULE:** Do not start the next milestone until the current milestone is explicitly considered complete and the user agrees to continue.
 
@@ -38,17 +38,19 @@ Planned structure only; these folders are currently absent and are not tracked:
 - `frontend/admin/`, `frontend/customer/`
 - `knowledge/`, `scripts/`
 
-The planned folders do not represent implemented features. `app/api/` contains development authentication and the Customer Booking API on `main`. The OWNER calendar and basic appointment-management API is implemented on the Stage 30B.3 feature branch.
+The planned folders do not represent implemented features. `app/api/` contains development authentication and the Customer Booking API on `main`. The OWNER calendar and basic appointment-management API is implemented on `main`.
 
 Latest verified results:
-- **632 tests passed, 0 failed** for Stage 30B.3. The focused final audit passed **328 tests**.
+- **632 tests passed, 0 failed** in the Stage 30B.3 post-merge regression. The focused final audit passed **328 tests**.
 - Historical Stage 30B.2 post-merge regression on 2026-11-15: **560 passed, 0 failed**.
 - **249 focused tests passed** at the audit remediation checkpoint.
 - Tests use isolated temporary databases and cover concurrent booking and selection, transactional rollback, tenant isolation, exact money, and Stage 27–30B.1 regressions.
 
 Git checkpoint:
-- Current branch: `feature/stage-30b3-owner-management-api`. Verified implementation and remediation HEAD before the documentation commit: `0d528faed4b9155a0be8f39dcc25013adc088ac1`.
-- Verified local and remote `main`: `ffe63295d968a0ce8b9526b3640170ed3a266029`.
+- Current branch: `main`. Stage 30B.3 merge commit: `753277c83916dc0d0fc862a48dec5ee49d7d1efc`. The regular two-parent merge preserved all seven feature commits.
+- Retained Stage 30B.3 branch: `feature/stage-30b3-owner-management-api`. Reviewed PR head: `2aa5dd6ccaf585a2614cbeb94ff0bbfcfdef1fbe`.
+- Stage 30B.3 implementation and remediation HEAD before the feature documentation commit: `0d528faed4b9155a0be8f39dcc25013adc088ac1`.
+- Stage 30B.3 pre-merge `main`: `ffe63295d968a0ce8b9526b3640170ed3a266029`.
 - Stage 30B.2 merge commit: `7119d95f50325812ea07b443997eca478d5d075b`. The regular two-parent merge preserved all seven feature commits.
 - Retained feature branch: `feature/stage-30b2-customer-booking-api`. Reviewed PR head: `6de4a2d661a685c1a9e894dbf93360cb93d1759f`.
 - Verified implementation/remediation HEAD before the documentation commit: `6abf95ea9918df3bf7f0a58e0eaa5235266803d1`
@@ -61,7 +63,7 @@ Git checkpoint:
 - Historical implementation HEAD: `6091baf8caea0aa005bba4e7271b285368da162d`; reviewed documentation/PR head: `47bdcea7f9fcf90832264ed652d35bb88d682a5f`.
 - Historical pre-merge `main`: `5846451000e8dc2ef75cb9605c63613295ef353e` (Stage 28 baseline plus documentation).
 - GitHub: https://github.com/gnhbsc30-source/barbershop_crm
-- Local and remote feature HEADs were synchronized and the working tree was clean at audit verification. Git history records the subsequent documentation-only checkpoint commit.
+- Local and remote `main` matched at merge verification, with a clean working tree. Git history records the subsequent documentation-only checkpoint commit.
 
 ## 3. What Has Been Completed
 
@@ -256,7 +258,7 @@ All routes below are under `/api/v1/customer`.
 - History reads stored booked service names, prices and durations in a consistent snapshot. Catalog changes leave those booked item snapshots intact.
 - Both booking paths prepare and render the HTTP 201 response and Location inside the write transaction. A preparation failure rolls back. After commit, alternative cleanup failures are logged generically and success is preserved. Failed context expiry leaves the claim closed; cleanup is lazy and has no cross-resource crash atomicity. Delivery after commit can still be interrupted.
 
-### Stage 30B.3 — Owner Calendar & Basic Appointment Management (merge pending)
+### Stage 30B.3 — Owner Calendar & Basic Appointment Management (merged and verified on `main`)
 
 All routes below use `/api/v1/owner`.
 
@@ -332,7 +334,7 @@ The schema includes cancellation-policy data, but cancellation execution/API, cu
 Historical product direction (repricing/notification flow is not implemented or a finalized Stage 30 contract): appointments more than one week away may receive the new price and customer notification; appointments within one week retain the old price. Final booking/rescheduling repricing policy still requires approval.
 
 ### MVP owner editing boundary
-Approved scope is staff/date/time only. Services, customer identity, manual price and notes changes are excluded from MVP rescheduling. Stage 30B.3 implements this boundary on the feature branch. Cancellation, broader rescheduling policies and owner overrides remain deferred.
+Approved scope is staff/date/time only. Services, customer identity, manual price and notes changes are excluded from MVP rescheduling. Stage 30B.3 implements this boundary on `main`. Cancellation, broader rescheduling policies and owner overrides remain deferred.
 
 ### Tenant isolation
 Every tenant-scoped operation must be authorized and scoped by `business_id`.
@@ -445,4 +447,4 @@ Still unresolved unless explicitly changed later:
 
 ## 10. Checkpoint and Next Milestone
 
-Stage 30B.2 remains merged and verified on `main`. Stage 30B.3 is ready for PR review on its feature branch, with merge pending. The next action is architectural merge review. Stage 30B.4 requires separate approval.
+Stage 30B.3 post-merge verification is complete. ADR-045 through ADR-047 record the approved OWNER authorization, guest booking and conditional-edit contracts. Stage 30B.4 has not started and requires separate architectural approval.

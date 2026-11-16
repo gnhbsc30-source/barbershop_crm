@@ -26,11 +26,14 @@ Post-merge regression: **560 passed, 0 failed**. Reviewed PR head:
 was `6abf95ea9918df3bf7f0a58e0eaa5235266803d1`. ADR-042 through ADR-044 remain
 the approved development MVP decisions.
 
-Current Stage 30B.3 feature checkpoint (2026-11-16): audit verdict **READY FOR PR**,
-full regression **632 passed, 0 failed**. Verified implementation and audit HEAD
-`0d528faed4b9155a0be8f39dcc25013adc088ac1` on `feature/stage-30b3-owner-management-api`.
-Merge into `main` at `ffe63295d968a0ce8b9526b3640170ed3a266029` remains pending.
-Stage 30B.4 requires separate architectural approval.
+Current Stage 30B.3 post-merge checkpoint: [PR #5](https://github.com/gnhbsc30-source/barbershop_crm/pull/5) merged into
+`main` on 2026-11-16 via regular merge commit `753277c83916dc0d0fc862a48dec5ee49d7d1efc`.
+All seven feature commits were preserved. Post-merge regression **632 passed, 0 failed**.
+The reviewed PR head was `2aa5dd6ccaf585a2614cbeb94ff0bbfcfdef1fbe` on the retained
+`feature/stage-30b3-owner-management-api` branch. The pre-merge audit verdict was
+**READY FOR PR** at remediation HEAD `0d528faed4b9155a0be8f39dcc25013adc088ac1`.
+ADR-045 through ADR-047 retain the approved owner API decisions.
+Stage 30B.4 has not started and requires separate architectural approval.
 
 ## ADR-001 — Database Is the Source of Truth
 
@@ -608,7 +611,7 @@ No Stage 29 API routes, UI, Chat, or AI selection execution integration exists. 
 
 **Decision:** The approved future owner-editing/rescheduling boundary allows changing staff, date and time only. Services, customer identity, manual prices and notes are excluded from MVP rescheduling.
 
-**Status:** Implemented on the Stage 30B.3 feature branch within this scope. See ADR-047. Both future customer/owner interfaces must share the real backend/development DB. Cancellation cutoffs, rescheduling/status-transition policy, owner overrides and repricing remain undecided; this ADR does not approve those policies or infer a cancellation/rescheduling command implementation.
+**Status:** Implemented on `main` in Stage 30B.3 within this scope. See ADR-047. Both future customer/owner interfaces must share the real backend/development DB. Cancellation cutoffs, rescheduling/status-transition policy, owner overrides and repricing remain undecided; this ADR does not approve those policies or infer a cancellation/rescheduling command implementation.
 
 ---
 

@@ -1,14 +1,18 @@
 # Barbershop CRM — Conversation Context Archive
 # Curated recovery context, not a literal transcript of every chat message.
 
-## Current Verified Feature Checkpoint — 2026-11-16
+## Current Verified Post-Merge Checkpoint
 
 Stage: 30B.3 Owner Calendar & Basic Appointment Management
-Branch: feature/stage-30b3-owner-management-api
+Branch: main
+PR #5: https://github.com/gnhbsc30-source/barbershop_crm/pull/5 (merged 2026-11-16)
+Verified regular merge commit: 753277c83916dc0d0fc862a48dec5ee49d7d1efc
+Retained feature branch: feature/stage-30b3-owner-management-api
+Reviewed PR head: 2aa5dd6ccaf585a2614cbeb94ff0bbfcfdef1fbe
 Verified implementation and remediation HEAD: 0d528faed4b9155a0be8f39dcc25013adc088ac1
-Verified main: ffe63295d968a0ce8b9526b3640170ed3a266029
-Audit: READY FOR PR. Full regression: 632 passed, 0 failed. Focused audit: 328 passed.
-Stage 30B.3 is implemented on the feature branch. Merge remains pending.
+Pre-merge main: ffe63295d968a0ce8b9526b3640170ed3a266029
+Historical audit: READY FOR PR. Focused audit: 328 passed.
+Post-merge regression: 632 passed, 0 failed. All seven feature commits are ancestors of main.
 Git history records the subsequent documentation-only checkpoint commit.
 
 ## Historical Stage 30B.2 Post-Merge Checkpoint — 2026-11-15
@@ -653,8 +657,8 @@ Limits and exclusions:
 - Local-only, single-process in-memory sessions/rate limits/selection contexts; no restart durability or multi-worker support. Production auth, HTTPS, shared atomic storage and persistent migrations remain deferred.
 - Trusted local OS/filesystem boundary; supported launcher safeguards do not certify arbitrary ASGI configurations. Cross-resource crash atomicity and retroactive revocation of in-flight authorized work are not guaranteed.
 - Non-blocking hardening: Argon2 work-factor bounds, slow-body/concurrent-request resource controls, safe unexpected-error diagnostics and additional logout/rotation race coverage. Stage 29 timezone/DST, integer settings and lazy selection-context cleanup notes remain.
-- Stage 30B.1 supplied authentication. Customer booking HTTP and search ownership were added in Stage 30B.2 and are now on main. Stage 30B.3 adds owner calendar and basic management on its feature branch. Frontend, cancellation, broader rescheduling, ANY Alternative Discovery and AI/Chat remain deferred.
-- Owner edits on the Stage 30B.3 feature branch are staff/date/time only; services, customer identity, manual price and notes changes are excluded from MVP rescheduling. Cancellation, rescheduling, owner-override and repricing rules still need approval; no new policy is inferred.
+- Stage 30B.1 supplied authentication. Customer booking HTTP and search ownership were added in Stage 30B.2 and are now on main. Stage 30B.3 adds owner calendar and basic management on main. Frontend, cancellation, broader rescheduling, ANY Alternative Discovery and AI/Chat remain deferred.
+- Owner edits on main as of Stage 30B.3 are staff/date/time only; services, customer identity, manual price and notes changes are excluded from MVP rescheduling. Cancellation, rescheduling, owner-override and repricing rules still need approval; no new policy is inferred.
 
 ## Stage 30B.2 — Customer Booking API (Merged and Verified)
 
@@ -686,7 +690,7 @@ state, lazy expiration, and the Asia/Jerusalem naive scheduling clock prerequisi
 remain. No schema migration, frontend, owner calendar, cancellation, rescheduling
 or AI/Chat was added.
 
-## Stage 30B.3 — Owner Calendar & Basic Appointment Management (Merge Pending)
+## Stage 30B.3 — Owner Calendar & Basic Appointment Management (Merged and Verified)
 
 Under /api/v1/owner: GET /appointments, GET /appointments/{appointment_id},
 GET /customers, GET /booking-options, POST /appointment-quotes,
@@ -739,8 +743,8 @@ one isolated business/customer organization inside the SaaS.
 
 ## Current Next Step
 
-Stage 30B.3 has passed its final audit and awaits architectural PR review and
-separate merge approval. Stage 30B.4 has not started.
+Stage 30B.3 is merged and post-merge verified. Stage 30B.4 has not started and
+requires separate architectural approval.
 
 ## Context Safety Rule
 
