@@ -34,7 +34,16 @@ def require_customer_post(context=Depends(require_csrf_session)):
     return require_customer(context)
 
 
-async def read_customer_body(request, model):
+def reject_repeated_members(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("DUPLICATE_JSON_MEMBER")
+        result[key] = value
+    return result
+
+
+async def read_customer_body(request, model, *, unique_members=False):
     query_keys(request)
     types = request.headers.getlist("content-type")
     if len(types) != 1 or types[0].split(";", 1)[0].strip().lower() != "application/json":
@@ -45,7 +54,7 @@ async def read_customer_body(request, model):
             raise AuthHTTPError(413, "REQUEST_TOO_LARGE")
         raw.extend(chunk)
     try:
-        data = json.loads(raw)
+        data = json.loads(raw, object_pairs_hook=reject_repeated_members if unique_members else None)
         return model.model_validate(data)
     except ValidationError as error:
         messages = {entry["msg"] for entry in error.errors(include_input=False)}

@@ -170,14 +170,14 @@ def booking_options(request: Request, context=Depends(require_owner)):
 
 @router.post("/appointment-quotes", response_model=SlotQuote, openapi_extra=request_contract(OwnerSlot))
 async def quote(request: Request, context=Depends(require_owner_mutation)):
-    data = await read_customer_body(request, OwnerSlot)
+    data = await read_customer_body(request, OwnerSlot, unique_members=True)
     return await run_in_threadpool(execute_owner, request, context,
                                    lambda service: SlotQuote.model_validate(service.quote(data)), scheduling=True)
 
 
 @router.post("/appointments", status_code=201, response_model=AppointmentDetail, openapi_extra=request_contract(OwnerBooking))
 async def book(request: Request, context=Depends(require_owner_mutation)):
-    data = await read_customer_body(request, OwnerBooking)
+    data = await read_customer_body(request, OwnerBooking, unique_members=True)
     return await run_in_threadpool(execute_owner, request, context, lambda service: service.book(
         data, lambda detail, etag: detail_response(detail, etag, status=201)), scheduling=True)
 
@@ -192,6 +192,6 @@ async def edit(appointment_id: str, request: Request, context=Depends(require_ow
         raise AuthHTTPError(428, "IF_MATCH_REQUIRED")
     if len(tokens) != 1 or re.fullmatch(r'"[a-f0-9]{64}"', tokens[0]) is None:
         raise AuthHTTPError(422, "INVALID_IF_MATCH")
-    data = await read_customer_body(request, OwnerAppointmentEdit)
+    data = await read_customer_body(request, OwnerAppointmentEdit, unique_members=True)
     return await run_in_threadpool(execute_owner, request, context,
         lambda service: service.edit(identifier, data, tokens[0], detail_response), scheduling=True)

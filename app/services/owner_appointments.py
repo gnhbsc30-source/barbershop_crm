@@ -157,7 +157,10 @@ class OwnerAppointments:
                 raise OwnerAppointmentError("APPOINTMENT_UNAVAILABLE")
 
             utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
-            new_revision = max(utc_now, revision + timedelta(microseconds=1))
+            try:
+                new_revision = max(utc_now, revision + timedelta(microseconds=1))
+            except OverflowError:
+                raise BookingConfigurationError() from None
             repositories.update_owner_appointment_schedule(
                 self.connection, self.business_id, appointment_id, staff_id=staff_id,
                 start=start.isoformat(), end=end.isoformat(),

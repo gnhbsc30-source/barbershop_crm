@@ -461,3 +461,165 @@ def test_booking_options_rejects_oversized_catalog(client, owner, http_data):
     response = client.get(ROOT + "/booking-options")
     assert response.status_code == 503
     assert response.json() == {"error": {"code": "BOOKING_OPTIONS_LIMIT_EXCEEDED"}}
+
+
+def test_owner_rejects_ambiguous_duplicate_json_members(client, owner, schedule_clock, http_data):
+    import json
+
+    body = booking_body(client, owner, customer={"type": "NEW", "name": "Walk-in"})
+    raw = json.dumps(body).replace('"type": "NEW"', '"type": "EXISTING", "type": "NEW"')
+    result = client.post(ROOT + "/appointments", content=raw,
+                         headers={**owner, "Content-Type": "application/json"})
+    assert result.status_code == 422
+    assert counts(http_data[0]) == (1, 1, 0, 0)
+
+
+def test_exhausted_revision_is_configuration_error(client, owner, booked_owner, http_data):
+    execute(http_data[0], "UPDATE appointments SET updated_at='9999-12-31 23:59:59.999999'")
+    detail = client.get(booked_owner.headers["location"])
+    result = move(client, booked_owner, owner, {"staff_id": 2}, token=detail.headers["etag"])
+    assert result.status_code == 503
+    assert result.json() == {"error": {"code": "BOOKING_CONFIGURATION_INVALID"}}
+    assert client.get(booked_owner.headers["location"]).headers["etag"] == detail.headers["etag"]
+
+
+@pytest.mark.parametrize("boundary", [
+    "duplicate", "guest_insert", "confirmation", "availability", "appointment_insert",
+    "item_insert", "etag", "serialize", "render_201", "success",
+])
+def test_guest_uses_one_write_transaction_at_every_boundary(
+    client, owner, schedule_clock, http_data, monkeypatch, boundary,
+):
+    from app.api import owner_appointments as owner_api
+    from app.services import owner_appointments as owner_service
+
+    phone = "0501234567"
+    body = booking_body(client, owner, customer={"type": "NEW", "name": "Guest", "phone": phone})
+    path = http_data[0]
+    if boundary == "duplicate":
+        execute(path, "UPDATE customers SET phone=?", (phone,))
+    elif boundary in ("guest_insert", "appointment_insert", "item_insert"):
+        table = {"guest_insert": "customers", "appointment_insert": "appointments",
+                 "item_insert": "appointment_items"}[boundary]
+        execute(path, f"""CREATE TRIGGER audit_failure BEFORE INSERT ON {table}
+            BEGIN SELECT RAISE(ABORT, 'audit sentinel'); END""")
+    elif boundary == "confirmation":
+        execute(path, "UPDATE services SET default_price=81 WHERE id=1")
+    elif boundary == "availability":
+        insert_appointment(path, "2027-01-04T10:00:00", "2027-01-04T10:45:00")
+
+    before = counts(path)
+    transactions = []
+    open_database = database.open_development_database
+
+    def traced(*args, **kwargs):
+        connection = open_database(*args, **kwargs)
+        connection.set_trace_callback(lambda sql: transactions.append(sql)
+                                      if sql in {"BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"} else None)
+        return connection
+
+    def fail(*args, **kwargs):
+        assert transactions == ["BEGIN IMMEDIATE"]
+        raise ValueError("audit sentinel")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(database, "open_development_database", traced)
+        if boundary == "etag":
+            patch.setattr(owner_service, "appointment_etag", fail)
+        elif boundary == "serialize":
+            patch.setattr(owner_api.AppointmentDetail, "model_validate", fail)
+        elif boundary == "render_201":
+            def fail_render(value, *, status_code, headers):
+                assert status_code == 201
+                assert headers["Location"].startswith(ROOT + "/appointments/")
+                assert headers["ETag"]
+                fail()
+            patch.setattr(owner_api, "JSONResponse", fail_render)
+        result = client.post(ROOT + "/appointments", headers=owner, json=body)
+
+    assert "audit sentinel" not in result.text
+    if boundary == "success":
+        assert result.status_code == 201
+        assert transactions == ["BEGIN IMMEDIATE", "COMMIT"]
+        assert counts(path) == (before[0] + 1, before[1], before[2] + 1, before[3] + 1)
+    else:
+        assert result.status_code == (409 if boundary in {"duplicate", "confirmation", "availability"} else 500)
+        assert transactions == ["BEGIN IMMEDIATE", "ROLLBACK"]
+        assert counts(path) == before
+
+
+def test_existing_customer_rechecks_activity_inside_write_transaction(
+    client, owner, schedule_clock, http_data, monkeypatch,
+):
+    from contextlib import contextmanager
+    from app.services import appointments
+
+    body = booking_body(client, owner)
+    original = appointments.transaction
+
+    @contextmanager
+    def deactivate_after_preflight(connection):
+        execute(http_data[0], "UPDATE customers SET is_active=0 WHERE id=1")
+        with original(connection) as transaction_connection:
+            yield transaction_connection
+
+    monkeypatch.setattr(appointments, "transaction", deactivate_after_preflight)
+    result = client.post(ROOT + "/appointments", headers=owner, json=body)
+    assert result.status_code == 404
+    assert result.json() == {"error": {"code": "CUSTOMER_NOT_FOUND"}}
+    assert counts(http_data[0]) == (1, 1, 0, 0)
+
+
+@pytest.mark.parametrize("revision", ["2027-01-04 09:00:00", "2027-01-04 09:00:00.123456"])
+def test_edit_advances_utc_revision_at_fixed_clock(client, owner, booked_owner, http_data, revision):
+    from datetime import datetime, timedelta
+
+    execute(http_data[0], "UPDATE appointments SET updated_at=?", (revision,))
+    detail = client.get(booked_owner.headers["location"])
+    result = move(client, booked_owner, owner, {"staff_id": 2}, token=detail.headers["etag"])
+    assert result.status_code == 200
+    with closing(database.open_development_database(http_data[0])) as connection:
+        stored, = connection.execute("SELECT updated_at FROM appointments").fetchone()
+    assert stored == (datetime.fromisoformat(revision) + timedelta(microseconds=1)).isoformat(
+        sep=" ", timespec="microseconds")
+
+
+@pytest.mark.parametrize("revision", ["unparseable", "2027-01-04", "2027-01-04T09:00:00+02:00"])
+def test_invalid_revision_fails_safely(client, owner, booked_owner, http_data, revision):
+    execute(http_data[0], "UPDATE appointments SET updated_at=?", (revision,))
+    url = booked_owner.headers["location"]
+    for result in (client.get(url), move(client, booked_owner, owner, {"staff_id": 2})):
+        assert result.status_code == 503 and "etag" not in result.headers
+        assert result.json() == {"error": {"code": "BOOKING_CONFIGURATION_INVALID"}}
+
+
+def test_owner_duplicate_query_and_if_match_are_rejected(client, owner, booked_owner):
+    assert client.get(CALENDAR + "&limit=1&limit=2").status_code == 422
+    tag = booked_owner.headers["etag"]
+    headers = [*owner.items(), ("If-Match", tag), ("If-Match", tag)]
+    result = client.patch(booked_owner.headers["location"], headers=headers, json={"staff_id": 2})
+    assert result.status_code == 422
+
+
+def test_noop_does_not_issue_update(client, owner, booked_owner, http_data):
+    execute(http_data[0], """CREATE TRIGGER deny_update BEFORE UPDATE ON appointments
+        BEGIN SELECT RAISE(ABORT, 'no writes expected'); END""")
+    result = move(client, booked_owner, owner, {"staff_id": 1, "start_datetime": SLOT["start_datetime"]})
+    assert result.status_code == 200
+    assert result.headers["etag"] == booked_owner.headers["etag"]
+
+
+@pytest.mark.parametrize("statement", [
+    "UPDATE appointment_items SET duration_minutes=45.25",
+    "UPDATE appointment_items SET price=80.001",
+    "UPDATE appointment_items SET duration_minutes=40",
+])
+def test_invalid_booked_snapshot_cannot_move(client, owner, booked_owner, http_data, statement):
+    execute(http_data[0], statement)
+    detail = client.get(booked_owner.headers["location"])
+    result = move(client, booked_owner, owner, {"staff_id": 2},
+                  token=detail.headers.get("etag", booked_owner.headers["etag"]))
+    assert result.status_code == 503
+    assert result.json() == {"error": {"code": "BOOKING_CONFIGURATION_INVALID"}}
+    with closing(database.open_development_database(http_data[0])) as connection:
+        assert connection.execute("SELECT staff_id FROM appointments").fetchone()[0] == 1
