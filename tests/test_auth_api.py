@@ -417,7 +417,8 @@ def test_only_approved_routes_and_no_cors(client):
                                           "/api/v1/customer/appointments/{appointment_id}",
                                           "/api/v1/owner/appointments", "/api/v1/owner/appointments/{appointment_id}",
                                           "/api/v1/owner/customers", "/api/v1/owner/booking-options",
-                                          "/api/v1/owner/appointment-quotes"}
+                                          "/api/v1/owner/appointment-quotes", "/api/v1/public/businesses/{slug}",
+                                          f"{AUTH}/tenant-context/{{slug}}", "/api/v1/customer/available-slots"}
     response = client.options(f"{AUTH}/dev-session", headers={"Origin": "http://attacker.test", "Access-Control-Request-Method": "POST"})
     assert response.status_code == 403
     assert "access-control-allow-origin" not in response.headers

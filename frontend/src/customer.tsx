@@ -57,8 +57,8 @@ function Times({slug, query, onSessionLost}: {slug: string; query: string; onSes
 }
 
 function clockLabel(localTime: string) {
-  const clock = localTime.slice(11);
-  return clock.endsWith(':00') && clock.length === 8 ? clock.slice(0, 5) : clock;
+  const clock = localTime.slice(11, 19);
+  return clock.endsWith(':00') ? clock.slice(0, 5) : clock;
 }
 
 function businessToday() {

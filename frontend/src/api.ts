@@ -3,10 +3,12 @@ import type {ResourceId} from './transport';
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly retryAfter: number;
 
-  constructor(status: number, code: string) {
+  constructor(status: number, code: string, retryAfter = 0) {
     super(code);
     this.status = status;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -21,7 +23,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (response.status === 204) return undefined as T;
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new ApiError(response.status, body?.error?.code ?? 'HTTP_ERROR');
+    const retryAfter = Number(response.headers.get('Retry-After'));
+    throw new ApiError(response.status, body?.error?.code ?? 'HTTP_ERROR',
+      Number.isSafeInteger(retryAfter) && retryAfter > 0 ? retryAfter : 0);
   }
   return decodeJson(await response.text()) as T;
 }

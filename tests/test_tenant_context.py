@@ -80,3 +80,25 @@ def test_invalid_slug_mapping(http_data, monkeypatch, mapping):
     with closing(open_development_database(http_data[0])) as connection:
         with pytest.raises(ValueError, match="INVALID_DEVELOPMENT_SLUG_CONFIGURATION"):
             local_slug_mapping(connection)
+
+
+def test_second_business_owner_cannot_enter_first_business(two_businesses, monkeypatch):
+    from app.services.owner_appointments import OwnerAppointments
+
+    path, _ = two_businesses
+    selector, secret = "o" * 16, "r" * 43
+    with browser() as client:
+        execute(path, "INSERT INTO users (id,business_id,username,password_hash,role) VALUES (2,2,?,?,'OWNER')",
+                (selector, hash_access_secret(secret)))
+        app.state.auth_identities = MappingProxyType({
+            **app.state.auth_identities, selector: IdentityReference("user", 2, 2),
+        })
+        response = login(client, selector + "." + secret)
+        assert response.status_code == 200
+        assert client.get("/api/v1/auth/tenant-context/other").status_code == 200
+        assert client.get("/api/v1/auth/tenant-context/first").status_code == 404
+        assert client.get("/api/v1/owner/booking-options", headers={"X-Barbershop-Slug": "other"}).status_code == 200
+        assert client.get("/api/v1/customer/services", headers={"X-Barbershop-Slug": "other"}).status_code == 403
+        monkeypatch.setattr(OwnerAppointments, "booking_options",
+                            lambda *args: pytest.fail("tenant mismatch reached owner service"))
+        assert client.get("/api/v1/owner/booking-options", headers={"X-Barbershop-Slug": "first"}).status_code == 404

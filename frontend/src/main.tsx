@@ -17,9 +17,10 @@ function App() {
   const [tenant, setTenant] = useState<Tenant>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [retryDelay, setRetryDelay] = useState(0);
   const [logoutPending, setLogoutPending] = useState(false);
   const [page, setPage] = useState(() => window.location.pathname.split('/').slice(3).join('/'));
-  const slug = window.location.pathname.split('/')[2];
+  const slug = decodeURIComponent(window.location.pathname.split('/')[2]);
   const base = '/b/' + encodeURIComponent(slug);
   const restoreRequest = useRef<AbortController | null>(null);
   const actionPending = useRef(false);
@@ -113,9 +114,15 @@ function App() {
     };
   }, [session, loseSession]);
 
+  useEffect(() => {
+    if (!retryDelay) return;
+    const timer = window.setTimeout(() => setRetryDelay(0), retryDelay * 1000);
+    return () => window.clearTimeout(timer);
+  }, [retryDelay]);
+
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (actionPending.current) return;
+    if (actionPending.current || retryDelay) return;
     const form = event.currentTarget;
     const accessCode = new FormData(form).get('access_code');
     form.reset();
@@ -132,8 +139,12 @@ function App() {
         body: JSON.stringify({access_code: accessCode}),
       }));
     } catch (failure) {
-      setError(failure instanceof ApiError && failure.status === 429
-        ? 'יותר מדי ניסיונות. אפשר לנסות שוב בהמשך.' : 'הכניסה נכשלה.');
+      if (failure instanceof ApiError && failure.status === 429) {
+        setRetryDelay(failure.retryAfter);
+        setError('יותר מדי ניסיונות. אפשר לנסות שוב בהמשך.');
+      } else {
+        setError('הכניסה נכשלה.');
+      }
     } finally {
       actionPending.current = false;
       setBusy(false);
@@ -193,7 +204,7 @@ function App() {
         <h2>כניסה לסביבת פיתוח</h2>
         <label htmlFor="access-code">קוד גישה</label>
         <input id="access-code" name="access_code" type="password" dir="ltr" autoComplete="off" required minLength={60} maxLength={60}/>
-        <button disabled={busy}>כניסה</button>
+        <button disabled={busy || retryDelay > 0}>כניסה</button>
       </form>
       : matched === undefined ? <p role="status">בודקים את החיבור למספרה…</p>
       : matched === 'mismatch' ? <p role="alert">החיבור אינו מתאים למספרה זו. צאו כדי להיכנס מחדש.</p>

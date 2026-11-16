@@ -1,3 +1,3 @@
 import { defineConfig } from 'vite';
 
-export default defineConfig({base: '/', build: {assetsDir: 'web-assets'}});
+export default defineConfig({base: '/', build: {assetsDir: 'web-assets', manifest: true}});

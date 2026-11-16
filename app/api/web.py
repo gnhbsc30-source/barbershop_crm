@@ -7,9 +7,10 @@ from starlette.exceptions import HTTPException
 from starlette.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 
+from app.core.tenant_slugs import SLUG
+
 
 WEB_BUILD = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-from app.core.tenant_slugs import SLUG
 
 WEB_ROUTE = re.compile(
     r"(?:login|book(?:/availability|/review)?|appointments(?:/[1-9][0-9]{0,18})?"
