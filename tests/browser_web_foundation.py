@@ -1,8 +1,8 @@
 """Optional Chromium integration check.
 
 Build the frontend, then run this file explicitly with pytest in an environment
-with Playwright and Chromium installed. Route requests at the exact dev origin
-through the FastAPI test client so an existing launcher need not be stopped.
+with Playwright and Chromium installed. Deterministic cases use FastAPI's test
+transport. The real launcher smoke test runs when port 8000 is available.
 """
 
 from datetime import datetime, timedelta, timezone

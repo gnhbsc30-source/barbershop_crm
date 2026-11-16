@@ -5,15 +5,23 @@
 
 ## 1. Current Phase
 
-**Phase:** Two-sided local development MVP → Owner Calendar & Basic Appointment Management
+**Phase:** Two-sided local development MVP → Web foundation and daily availability
 
-**Current milestone:** Stage 30B.3 is implemented, audited, merged into `main` through [PR #5](https://github.com/gnhbsc30-source/barbershop_crm/pull/5), and verified.
+**Current milestone:** Stage 30B.4A checkpoints A–E are implemented on `feature/stage-30b4a-web-foundation`. The first independent review of `98f089f225c44e68c022bf9bfeaf6f12b71fb84e` requested changes. This branch includes the remediation and awaits a second independent review and merge. Stage 30B.3 remains the latest accepted milestone on `main`.
 
-**Audit checkpoint:** **READY FOR PR**, with **632 passed, 0 failed**. Owner mutations now reject duplicate JSON members. An exhausted stored revision returns a sanitized configuration error and leaves the appointment unchanged.
+**Main regression baseline:** **632 passed, 0 failed** after Stage 30B.3 and the skills infrastructure.
 
-**Next steps:** Stage 30B.4 has not started and requires separate architectural approval.
+**Next steps:** Obtain independent acceptance of Stage 30B.4A before merge or work on 30B.4B.
 
 **STOP RULE:** Do not start the next milestone until the current milestone is explicitly considered complete and the user agrees to continue.
+
+### Stage 30B.4A feature branch
+
+- A–E delivered the same-origin React/TypeScript/Vite build, public identity and tenant matching, CUSTOMER daily slots, role-aware Hebrew RTL skeletons, lossless SQLite identifiers and browser verification.
+- The public route uses a server-side development slug mapping and exposes only public identity. Access-code login remains development-only. See ADR-048 for the discovery, tenant-context and daily-slot API contracts, and ADR-049 for the display policy and workload limits.
+- Remediation adds focus and cross-tab session revalidation, tests for two occupied computations and a third HTTP session, and Hebrew and mixed-direction heading reflow at 320px and 200% CSS zoom. Chromium coverage also includes a smoke test through the supported loopback launcher. Native browser zoom, a screen-reader session, production deployment and DST fold/gap support remain unverified.
+- Remediation verification: 653 Python regression tests passed, including 91 focused cases in the availability, tenant and OWNER API suites. Three Chromium checks, five frontend transport tests, TypeScript checking and the Vite build passed.
+- Full CUSTOMER checkout and OWNER management UI remain future milestones.
 
 ## 2. Current Verified State
 
@@ -29,13 +37,13 @@ Physically present directories containing tracked files:
 - `app/exceptions/`
 - `app/services/`
 - `docs/`
+- `frontend/` (Stage 30B.4A feature branch)
 - `tests/`
 
 Tracked application entry point: `app/main.py` (thin FastAPI composition root, authentication lifespan, auth, customer and owner routers, middleware, and `/health`). Development tools are `app/dev_data.py` and `app/dev_server.py`.
 
 Planned structure only; these folders are currently absent and are not tracked:
 - `app/ai/`
-- `frontend/admin/`, `frontend/customer/`
 - `knowledge/`, `scripts/`
 
 The planned folders do not represent implemented features. `app/api/` contains development authentication and the Customer Booking API on `main`. The OWNER calendar and basic appointment-management API is implemented on `main`.
@@ -47,7 +55,7 @@ Latest verified results:
 - Tests use isolated temporary databases and cover concurrent booking and selection, transactional rollback, tenant isolation, exact money, and Stage 27–30B.1 regressions.
 
 Git checkpoint:
-- Current branch: `main`. Stage 30B.3 merge commit: `753277c83916dc0d0fc862a48dec5ee49d7d1efc`. The regular two-parent merge preserved all seven feature commits.
+- Historical `main` checkpoint. Stage 30B.3 merge commit: `753277c83916dc0d0fc862a48dec5ee49d7d1efc`. The regular two-parent merge preserved all seven feature commits.
 - Retained Stage 30B.3 branch: `feature/stage-30b3-owner-management-api`. Reviewed PR head: `2aa5dd6ccaf585a2614cbeb94ff0bbfcfdef1fbe`.
 - Stage 30B.3 implementation and remediation HEAD before the feature documentation commit: `0d528faed4b9155a0be8f39dcc25013adc088ac1`.
 - Stage 30B.3 pre-merge `main`: `ffe63295d968a0ce8b9526b3640170ed3a266029`.
@@ -288,7 +296,7 @@ source commit `1d3ba314071e3b68a24c50222525012c1dff4573`.
 - [barbershop-security-review](../.agents/skills/barbershop-security-review/SKILL.md) combines the OpenAI security-best-practices and security-threat-model methods for tenant, identity and booking boundaries. [Upstream provenance](../.agents/skills/barbershop-security-review/PROVENANCE.md)
 - Both preserve the upstream Apache 2.0 license text and pinned revisions. The bundled validator and local link checks passed. [AGENTS.md](../AGENTS.md) routes skill use and points to the existing STOP rule.
 - Runtime discovery and explicit and implicit activation are **UNVERIFIED**. The installed app-server failed to initialize with `Operation not permitted (os error 1)` before it could list or load Skills. Synthetic checks used direct reads of the skill files.
-- Post-merge application regression: **632 passed, 0 failed**. Application code, schema and runtime dependencies are unchanged. Stage 30B.4A has not started and requires separate approval.
+- Post-merge application regression: **632 passed, 0 failed**. Application code, schema and runtime dependencies are unchanged. That checkpoint preceded Stage 30B.4A implementation.
 
 ### Deferred capabilities and production limitations
 - SQLite remains temporary; no production DB migration or persistent migration infrastructure. Schema changes do not upgrade existing databases automatically.
@@ -459,4 +467,4 @@ Still unresolved unless explicitly changed later:
 
 ## 10. Checkpoint and Next Milestone
 
-Stage 30B.3 post-merge verification is complete. ADR-045 through ADR-047 record the approved OWNER authorization, guest booking and conditional-edit contracts. Stage 30B.4 has not started and requires separate architectural approval.
+Stage 30B.3 post-merge verification is complete. ADR-045 through ADR-047 record the approved OWNER authorization, guest booking and conditional-edit contracts. Stage 30B.4A is on its feature branch and awaits independent acceptance. See ADR-048 and ADR-049.

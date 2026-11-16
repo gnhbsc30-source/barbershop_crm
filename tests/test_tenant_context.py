@@ -40,6 +40,9 @@ def test_public_projection_and_tenant_boundaries(two_businesses):
             assert client.get(endpoint).status_code == 200
             assert client.get(endpoint, headers={"X-Barbershop-Slug": "first"}).status_code == 200
             assert client.get(endpoint, headers={"X-Barbershop-Slug": "other"}).status_code == 404
+            malformed = ["", "FIRST", "first,other", "first--other"]
+            for value in malformed:
+                assert client.get(endpoint, headers={"X-Barbershop-Slug": value}).status_code == 422
             assert client.get(endpoint, headers=[("X-Barbershop-Slug", "first")] * 2).status_code == 422
         execute(path, "UPDATE businesses SET is_active = 0 WHERE id = 2")
         assert client.get("/api/v1/public/businesses/other").status_code == 404

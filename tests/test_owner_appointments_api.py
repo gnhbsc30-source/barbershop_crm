@@ -3,6 +3,7 @@ from contextlib import closing
 import pytest
 
 from app.db import database, repositories
+from app.main import app
 
 from test_auth_api import client, execute, http_data, login
 
@@ -623,3 +624,33 @@ def test_invalid_booked_snapshot_cannot_move(client, owner, booked_owner, http_d
     assert result.json() == {"error": {"code": "BOOKING_CONFIGURATION_INVALID"}}
     with closing(database.open_development_database(http_data[0])) as connection:
         assert connection.execute("SELECT staff_id FROM appointments").fetchone()[0] == 1
+
+
+def test_foreign_owner_cannot_read_or_move_appointment(client, owner, booked_owner, http_data):
+    from types import MappingProxyType
+    from app.services.authentication import IdentityReference, hash_access_secret
+
+    path = http_data[0]
+    execute(path, "INSERT INTO businesses (id,business_name) VALUES (2,'Other')")
+    selector, secret = "o" * 16, "r" * 43
+    execute(path, "INSERT INTO users (id,business_id,username,password_hash,role) VALUES (2,2,?,?,'OWNER')",
+            (selector, hash_access_secret(secret)))
+    app.state.auth_identities = MappingProxyType({
+        **app.state.auth_identities, selector: IdentityReference("user", 2, 2),
+    })
+    app.state.tenant_slugs = MappingProxyType({"first": 1, "other": 2})
+    location = booked_owner.headers["location"]
+
+    def stored():
+        with closing(database.open_development_database(path)) as connection:
+            return tuple(tuple(row) for row in connection.execute("SELECT * FROM appointments ORDER BY id"))
+
+    before = stored()
+    login_result = login(client, selector + "." + secret)
+    assert login_result.status_code == 200
+    headers = {**owner, "X-CSRF-Token": login_result.json()["csrf_token"]}
+    for slug in ("first", "other"):
+        scoped = {**headers, "X-Barbershop-Slug": slug}
+        assert client.get(location, headers=scoped).status_code == 404
+        assert move(client, booked_owner, scoped, {"staff_id": 2}).status_code == 404
+        assert stored() == before

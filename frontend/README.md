@@ -13,6 +13,6 @@ Run `npm --prefix frontend run check`, `npm --prefix frontend test`, and the
 Python regression suite with `python -m pytest -q`. The optional Chromium
 check requires a local Playwright and Chromium installation and a built
 frontend. Run it explicitly with
-`python -m pytest -q tests/browser_web_foundation.py`. That check routes the
-canonical development origin to FastAPI's test transport and isolated
-synthetic data without occupying port 8000.
+`python -m pytest -q tests/browser_web_foundation.py`. The deterministic checks route the canonical development origin to FastAPI's
+test transport and isolated synthetic data. The launcher smoke test uses the
+real loopback port and skips when port 8000 is unavailable.

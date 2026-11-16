@@ -667,6 +667,27 @@ Validate the exact interval using booked duration, active compatible destination
 
 ---
 
+## ADR-048 — Same-Origin Web and Development Tenant Context
+
+**Decision:** Serve a single Hebrew-first React/TypeScript/Vite build through FastAPI at `127.0.0.1:8000`. The existing loopback, Host, Origin, cookie, session and CSRF contracts continue to govern authentication and the API. Access-code login is development-only. Route fallback is limited to the approved `/b/{slug}` Web routes.
+
+- `GET /api/v1/public/businesses/{slug}` returns only `slug` and plain-text `display_name` for an active business. Canonical lowercase ASCII slugs are uniquely mapped to businesses in server-side local configuration (`BARBERSHOP_DEV_SLUGS`), with startup validation and no migration.
+- `GET /api/v1/auth/tenant-context/{slug}` returns `{slug}` only when the freshly validated session belongs to the active mapped business. Unknown, disabled and mismatched slugs return 404. Web business requests supply `X-Barbershop-Slug`. Existing API callers may omit it. Malformed or duplicate values return 422. Role, tenant and ownership derive from the server-side principal.
+- `GET /api/v1/customer/available-slots` requires CUSTOMER, one business-local `date`, one `staff_id` and 1–20 ordered distinct `service_id` values. It returns date, `business_timezone`, staff/services, display interval and ordered start/end times. The no-store read creates no search context or hold. Business-local scheduling uses `Asia/Jerusalem`. Privileged reads and writes retain their existing projections and protections.
+- Web revalidates session and tenant on return to a tab and after an origin-local session-change notification. Protected content is removed during validation. In-flight reads are aborted when their protected view is removed; late responses cannot restore that view. The notification carries a fixed event name. The Web preserves exact JSON integer IDs without routing them through JavaScript Number.
+
+---
+
+## ADR-049 — Daily Slots Presentation Margin and Computation Admission
+
+**Decision:** Preserve genuine free-window starts when legal, including off-grid starts from opening hours or a break, block or appointment ending. When the moving policy boundary lies strictly inside an already-open window, display only later grid-aligned starts with at least 60 seconds of slack beyond that boundary. A minute accommodates the transition from listing to quote without removing genuine starts or altering the minimum-notice rule. The first grid start exactly 60 seconds away is eligible. All displayed slots still obey the booking-window end and actual free-window duration. Genuine window starts can have less slack and remain subject to the exact quote and transaction checks.
+
+- Admission bounds scheduling computation to one active call per session and two per process. It starts after middleware, session/role verification and revalidation, bounded query parsing, optional tenant matching and the scheduling-clock check. Overload returns 429 with `Retry-After: 1`. Capacity is released on success and failure.
+- The daily route caps raw query text at 1,024 bytes before parsing. Before admission the supported loopback launcher still performs ordinary HTTP handling and local identity/tenant lookups. This is a computation bound. A request-wide connection or worker limit for an exposed or multi-worker deployment is outside this local design.
+- The day list reuses existing policy bounds, duration resolution, free windows and candidate generation. Quote, final transactional booking, and DST semantics remain governed by the existing contracts.
+
+---
+
 ## Architecture Principle — Complexity-Driven Structure
 
 The project does not introduce classes, files, abstractions, interfaces, or design patterns merely for stylistic or "professional-looking" structure.
