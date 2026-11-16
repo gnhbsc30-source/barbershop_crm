@@ -11,6 +11,7 @@ from app.services.booking_confirmation import BookingConfigurationError
 
 MAX_BLOCKERS = 4096
 MAX_SLOTS = 2880
+NOTICE_PRESENTATION_MARGIN = timedelta(minutes=1)
 
 
 def available_slots(customer, day, staff_id, service_ids):
@@ -49,9 +50,12 @@ def available_slots(customer, day, staff_id, service_ids):
             except ScheduleBudgetExceeded:
                 raise BookingConfigurationError() from None
             for first, last in windows:
+                # A genuine window start remains useful even when it is off-grid.
+                # A window clipped by the moving clock only contributes later grid starts.
+                display_from = earliest + NOTICE_PRESENTATION_MARGIN if first < earliest else first
                 starts.update(
                     start for start in generate_candidate_start_times(max(first, earliest), last, duration, interval)
-                    if start <= latest and (start + timedelta(minutes=duration)).date() == day
+                    if display_from <= start <= latest and (start + timedelta(minutes=duration)).date() == day
                 )
                 if len(starts) > MAX_SLOTS:
                     raise BookingConfigurationError()

@@ -37,6 +37,9 @@ def staff(request: Request, context=Depends(require_customer)):
 
 @router.get("/available-slots")
 def daily_slots(request: Request, context=Depends(require_customer)):
+    # The longest canonical query (20 signed-64-bit IDs) fits below this bound.
+    if len(request.scope["query_string"]) > 1024:
+        raise AuthHTTPError(422, "INVALID_REQUEST")
     query_keys(request, allowed=("date", "staff_id", "service_id"), repeated=("service_id",))
     query = request.query_params
     value = query.get("date", "")

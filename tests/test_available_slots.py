@@ -1,5 +1,9 @@
-from datetime import datetime
-from threading import Event, Thread
+from datetime import datetime, timedelta
+from threading import Event, Lock, Thread
+
+import pytest
+
+from test_tenant_context import browser
 
 from app.main import app
 from app.services import available_slots
@@ -46,7 +50,7 @@ def test_slots_use_real_windows_and_ordered_durations(client, http_data, booking
 def test_policy_boundaries_and_empty_days(client, http_data, booking_customer):
     _, clock = booking_customer
     execute(http_data[0], "UPDATE business_settings SET minimum_booking_notice_minutes = 17")
-    assert daily(client).json()["slots"][0]["start_datetime"] == "2027-01-04T09:17:00"
+    assert daily(client).json()["slots"][0]["start_datetime"] == "2027-01-04T09:30:00"
     assert daily(client, "2027-01-03").json()["error"]["code"] == "PAST_DATETIME"
     assert daily(client, "2027-01-09").json()["slots"] == []
     assert daily(client, "2027-04-04").json()["slots"][0]["start_datetime"] == "2027-04-04T09:00:00"
@@ -85,6 +89,7 @@ def test_daily_validation_and_no_partial_results(client, http_data, booking_cust
     assert daily(client, "2027-1-04").status_code == 422
     assert daily(client, services=(1, 1)).status_code == 422
     assert daily(client, staff=999).status_code == 404
+    assert client.get(ROOT + "/available-slots?date=" + "1" * 1024).status_code == 422
     monkeypatch.setattr(available_slots, "MAX_BLOCKERS", 0)
     occupy(http_data)
     response = daily(client)
@@ -92,32 +97,85 @@ def test_daily_validation_and_no_partial_results(client, http_data, booking_cust
     assert set(response.json()) == {"error"}
 
 
-def test_admission_does_not_queue_or_leak_capacity(client, http_data, booking_customer, monkeypatch):
-    started, release = Event(), Event()
-    implementation = available_slots.available_slots
+@pytest.mark.parametrize(("notice", "now", "expected"), [
+    (0, (9, 17, 0), "09:30:00"),
+    (17, (9, 0, 0), "09:30:00"),
+    (17, (9, 12, 30), "10:00:00"),  # The 09:30 grid start has only 30 seconds of slack.
+    (17, (9, 12, 0), "09:30:00"),  # Exactly one minute of slack is sufficient.
+])
+def test_clock_clipped_windows_leave_time_to_quote(client, http_data, booking_customer, notice, now, expected):
+    headers, clock = booking_customer
+    clock[0] = datetime(2027, 1, 4, *now)
+    execute(http_data[0], "UPDATE business_settings SET minimum_booking_notice_minutes = ?", (notice,))
+    start = daily(client).json()["slots"][0]["start_datetime"]
+    assert start == "2027-01-04T" + expected
+    clock[0] += timedelta(seconds=1)
+    quote = preview(client, headers, search_body(start_datetime=start))
+    assert quote["requested_availability"]["available"]
 
-    def paused(*args):
-        started.set()
-        assert release.wait(5)
-        return implementation(*args)
+
+def test_close_genuine_off_grid_start_remains_available(client, http_data, booking_customer):
+    headers, clock = booking_customer
+    execute(http_data[0], "UPDATE business_settings SET minimum_booking_notice_minutes = 17")
+    execute(http_data[0], """INSERT INTO schedule_blocks (business_id,start_datetime,end_datetime)
+                             VALUES (1,'2027-01-04T09:00:00','2027-01-04T09:17:30')""")
+    start = daily(client).json()["slots"][0]["start_datetime"]
+    assert start == "2027-01-04T09:17:30"
+    clock[0] += timedelta(seconds=1)
+    assert preview(client, headers, search_body(start_datetime=start))["requested_availability"]["available"]
+
+
+def test_three_http_sessions_overload_and_release_after_exception(client, http_data, booking_customer, monkeypatch):
+    both_running, release = Event(), Event()
+    lock = Lock()
+    implementation = available_slots.available_slots
+    active = 0
+
+    def paused(customer, day, staff, services):
+        nonlocal active
+        with lock:
+            active += 1
+            if active == 2:
+                both_running.set()
+        try:
+            assert release.wait(5)
+            if staff == 1:
+                raise RuntimeError("sensitive diagnostic must remain private")
+            return implementation(customer, day, staff, services)
+        finally:
+            with lock:
+                active -= 1
 
     monkeypatch.setattr("app.api.customer_booking.available_slots", paused)
-    responses = []
-    worker = Thread(target=lambda: responses.append(daily(client)))
-    worker.start()
+    responses = {}
+    second, third = browser(), browser()
     try:
-        assert started.wait(5)
-        limited = daily(client)
-        assert limited.status_code == 429
-        assert limited.headers["retry-after"] == "1"
-        with app.state.slot_admission.admit("another-session"):
-            from app.core.slot_admission import SlotsBusy
-            import pytest
-            with pytest.raises(SlotsBusy):
-                with app.state.slot_admission.admit("third-session"):
-                    pytest.fail("global admission cap was exceeded")
+        for other in (second, third):
+            assert login(other, http_data[2]["CUSTOMER"]).status_code == 200
+        tokens = {current.cookies["barbershop_dev_session"] for current in (client, second, third)}
+        assert len(tokens) == 3
+        workers = [
+            Thread(target=lambda: responses.update(first=daily(client, staff=1))),
+            Thread(target=lambda: responses.update(second=daily(second, staff=2))),
+        ]
+        for worker in workers:
+            worker.start()
+        try:
+            assert both_running.wait(5)
+            for rejected in (daily(client), daily(third)):
+                assert rejected.status_code == 429
+                assert rejected.json()["error"]["code"] == "AVAILABLE_SLOTS_BUSY"
+                assert rejected.headers["retry-after"] == "1"
+        finally:
+            release.set()
+            for worker in workers:
+                worker.join(5)
+        assert responses["first"].status_code == 500
+        assert responses["first"].json() == {"error": {"code": "INTERNAL_ERROR"}}
+        assert responses["second"].status_code == 200
+        monkeypatch.setattr("app.api.customer_booking.available_slots", implementation)
+        assert daily(client).status_code == 200
+        assert daily(third).status_code == 200
     finally:
-        release.set()
-        worker.join(5)
-    assert responses[0].status_code == 200
-    assert daily(client).status_code == 200
+        second.close()
+        third.close()
