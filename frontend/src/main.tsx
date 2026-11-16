@@ -11,6 +11,26 @@ function App() {
   const [session, setSession] = useState<Identity>(undefined);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const slug = window.location.pathname.split('/')[2];
+  const [business, setBusiness] = useState<string | null | undefined>();
+  const [tenant, setTenant] = useState<{session: Session; matched: boolean}>();
+
+  useEffect(() => {
+    const controller = new AbortController();
+    api<{display_name: string}>('/public/businesses/' + encodeURIComponent(slug), {signal: controller.signal})
+      .then(value => setBusiness(value.display_name), () => { if (!controller.signal.aborted) setBusiness(null); });
+    return () => controller.abort();
+  }, [slug]);
+
+  useEffect(() => {
+    if (!session) return;
+    const controller = new AbortController();
+    api('/auth/tenant-context/' + encodeURIComponent(slug), {signal: controller.signal}).then(
+      () => setTenant({session, matched: true}),
+      () => { if (!controller.signal.aborted) setTenant({session, matched: false}); },
+    );
+    return () => controller.abort();
+  }, [slug, session]);
 
   useEffect(() => {
     let active = true;
@@ -76,11 +96,13 @@ function App() {
   }
 
   return <main>
-    <h1>מספרה</h1>
+    <h1><bdi>{business ?? "מספרה"}</bdi></h1>
+    {business === null && <p role="alert">המספרה אינה זמינה.</p>}
+    {session && tenant?.session === session && !tenant.matched && <p role="alert">החיבור אינו מתאים למספרה זו.</p>}
     {error && <p role="alert">{error}</p>}
     {session === undefined ? <p role="status">בודקים את מצב הכניסה…</p>
       : session ? <button disabled={busy} onClick={logout}>יציאה</button>
-      : <form onSubmit={login}>
+      : business && <form onSubmit={login}>
         <h2>כניסה לסביבת פיתוח</h2>
         <label htmlFor="access-code">קוד גישה</label>
         <input id="access-code" name="access_code" type="password" dir="ltr" autoComplete="off" required maxLength={60}/>

@@ -6,6 +6,7 @@ from app.api.customer_booking import router as customer_router
 from app.api.owner_appointments import router as owner_router
 from app.core.local_security import LoopbackSecurityMiddleware
 from app.api.web import install_web
+from app.api.tenant_context import router as tenant_router
 
 
 app = FastAPI(
@@ -18,6 +19,7 @@ app = FastAPI(
 )
 app.add_middleware(LoopbackSecurityMiddleware)
 app.include_router(auth_router)
+app.include_router(tenant_router)
 app.include_router(customer_router)
 app.include_router(owner_router)
 

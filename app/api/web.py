@@ -9,8 +9,8 @@ from starlette.staticfiles import StaticFiles
 
 
 WEB_BUILD = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-SLUG_PATTERN = r"(?=.{1,63}$)[a-z0-9]+(?:-[a-z0-9]+)*"
-WEB_SLUG = re.compile(SLUG_PATTERN, re.ASCII)
+from app.core.tenant_slugs import SLUG
+
 WEB_ROUTE = re.compile(
     r"(?:login|book(?:/availability|/review)?|appointments(?:/[1-9][0-9]{0,18})?"
     r"|owner/(?:calendar|appointments/[1-9][0-9]{0,18}|book(?:/customer)?))"
@@ -30,7 +30,7 @@ def install_web(app):
     async def shell(request):
         slug = request.path_params["slug"]
         page = request.path_params.get("page")
-        if not WEB_SLUG.fullmatch(slug) or (page is not None and not WEB_ROUTE.fullmatch(page)):
+        if not SLUG.fullmatch(slug) or (page is not None and not WEB_ROUTE.fullmatch(page)):
             raise HTTPException(404)
         if not (WEB_BUILD / "index.html").is_file():
             raise HTTPException(503)

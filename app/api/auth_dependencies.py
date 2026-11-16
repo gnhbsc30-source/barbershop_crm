@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from app.core.auth_rate_limit import AuthenticationRateLimiter
 from app.core.auth_sessions import InMemorySessionStore, SessionContext, SessionError
 from app.core.config import settings
+from app.core.tenant_slugs import local_slug_mapping
 from app.core.local_security import validate_local_startup
 from app.core.booking_search_ownership import BookingSearchOwnership
 from app.db import database
@@ -33,10 +34,16 @@ class AuthHTTPError(Exception):
         self.headers = headers
 
 
+def _read_slug_mapping(path):
+    with closing(database.open_development_database(path)) as connection:
+        return local_slug_mapping(connection)
+
+
 @asynccontextmanager
 async def authentication_lifespan(app):
     path = Path(database.DATABASE_PATH).absolute()
     identities = await run_in_threadpool(validate_local_startup, path, settings.environment)
+    app.state.tenant_slugs = await run_in_threadpool(_read_slug_mapping, path.resolve())
     app.state.auth_database_path = path.resolve()
     app.state.auth_identities = MappingProxyType(identities)
     app.state.auth_sessions = InMemorySessionStore()
@@ -46,7 +53,7 @@ async def authentication_lifespan(app):
     try:
         yield
     finally:
-        for attribute in ("auth_database_path", "auth_identities", "auth_sessions", "auth_limiter", "booking_contexts", "booking_searches"):
+        for attribute in ("tenant_slugs", "auth_database_path", "auth_identities", "auth_sessions", "auth_limiter", "booking_contexts", "booking_searches"):
             delattr(app.state, attribute)
 
 
