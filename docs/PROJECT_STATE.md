@@ -278,6 +278,18 @@ All routes below use `/api/v1/owner`.
 - Moves require a strong ETag in If-Match. Actual moves advance the persisted revision monotonically, check the exact interval with only the moved appointment excluded, and preserve booked service names, durations, prices and totals. Inactive booked services block moves. A valid no-op keeps the revision. Invalid or exhausted revisions fail with a sanitized configuration error.
 - The final audit verified rollback at write and response-preparation boundaries, concurrent booking and edits, conditional revisions, tenant isolation and development restart behavior. See ADR-045 through ADR-047.
 
+### Repository Skills — PR #6 merged and statically verified
+
+[PR #6](https://github.com/gnhbsc30-source/barbershop_crm/pull/6) merged at
+`01324e212b52ebc0482212dfa427eaee6c7cf378`. The two-parent merge preserves
+source commit `1d3ba314071e3b68a24c50222525012c1dff4573`.
+
+- [barbershop-ui-design](../.agents/skills/barbershop-ui-design/SKILL.md) adapts Anthropic frontend-design for Classic Barbershop styling, Hebrew RTL and accessible booking and calendar flows. [Upstream provenance](../.agents/skills/barbershop-ui-design/PROVENANCE.md)
+- [barbershop-security-review](../.agents/skills/barbershop-security-review/SKILL.md) combines the OpenAI security-best-practices and security-threat-model methods for tenant, identity and booking boundaries. [Upstream provenance](../.agents/skills/barbershop-security-review/PROVENANCE.md)
+- Both preserve the upstream Apache 2.0 license text and pinned revisions. The bundled validator and local link checks passed. [AGENTS.md](../AGENTS.md) routes skill use and points to the existing STOP rule.
+- Runtime discovery and explicit and implicit activation are **UNVERIFIED**. The installed app-server failed to initialize with `Operation not permitted (os error 1)` before it could list or load Skills. Synthetic checks used direct reads of the skill files.
+- Post-merge application regression: **632 passed, 0 failed**. Application code, schema and runtime dependencies are unchanged. Stage 30B.4A has not started and requires separate approval.
+
 ### Deferred capabilities and production limitations
 - SQLite remains temporary; no production DB migration or persistent migration infrastructure. Schema changes do not upgrade existing databases automatically.
 - In-memory selection storage/claims are single-process and require the same store instance. Multi-worker deployment needs shared atomic storage; there is no restart durability or atomic transaction spanning booking and context consumption.

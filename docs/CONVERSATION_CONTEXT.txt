@@ -1,7 +1,36 @@
 # Barbershop CRM — Conversation Context Archive
 # Curated recovery context, not a literal transcript of every chat message.
 
-## Current Verified Post-Merge Checkpoint
+## Repository Skills Post-Merge Checkpoint
+
+PR #6: https://github.com/gnhbsc30-source/barbershop_crm/pull/6
+Regular merge: 01324e212b52ebc0482212dfa427eaee6c7cf378
+Source: 1d3ba314071e3b68a24c50222525012c1dff4573
+Both repo Skills are on main. AGENTS.md routes UI and security work and retains
+the existing STOP rule through PROJECT_STATE.md.
+
+barbershop-ui-design adapts anthropics/skills frontend-design at
+e4bb5d960d87126ff3b3a8af1a104b7db67560ba.
+barbershop-security-review combines openai/skills security-best-practices and
+security-threat-model at 49f948faa9258a0c61caceaf225e179651397431.
+Each skill directory contains its provenance and upstream Apache 2.0 license.
+
+Post-merge application regression: 632 passed, 0 failed. Both bundled validator
+checks and local reference checks passed. Runtime discovery, explicit invocation
+and natural-language activation are UNVERIFIED. The app-server returned
+Operation not permitted (os error 1) during initialization, before skill loading.
+
+Direct-read dry runs identified weak mobile hierarchy, inaccessible contrast,
+mixed-direction price labels, absent focus or feedback, and inconsistent tenant
+branding. The security review blocked slug-derived authorization and called for
+server-derived tenant and role checks with isolated regression tests.
+
+For runtime verification, open this repository as a Codex project in a normal
+session. List skills, explicitly invoke each, then repeat without the skill
+mentions. Confirm the trace shows each repository SKILL.md loaded. Stage 30B.4A
+has not started and requires separate approval.
+
+## Stage 30B.3 Verified Post-Merge Checkpoint
 
 Stage: 30B.3 Owner Calendar & Basic Appointment Management
 Branch: main
