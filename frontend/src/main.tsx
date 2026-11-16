@@ -1,72 +1,131 @@
-import {useEffect, useState} from 'react';
+import {useCallback, useEffect, useRef, useState} from 'react';
 import type {FormEvent} from 'react';
 import {createRoot} from 'react-dom/client';
 import {api, ApiError} from './api';
 import type {Session} from './api';
+import {Customer} from './customer';
+import {resourceId} from './transport';
 import './style.css';
 
 type Identity = Session | null | undefined;
+type Business = {status: 'ready'; name: string} | {status: 'missing' | 'error'};
+type Tenant = {session: Session; status: 'ready' | 'mismatch' | 'error'};
 
 function App() {
   const [session, setSession] = useState<Identity>(undefined);
+  const [business, setBusiness] = useState<Business>();
+  const [tenant, setTenant] = useState<Tenant>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [logoutPending, setLogoutPending] = useState(false);
+  const [page, setPage] = useState(() => window.location.pathname.split('/').slice(3).join('/'));
   const slug = window.location.pathname.split('/')[2];
-  const [business, setBusiness] = useState<string | null | undefined>();
-  const [tenant, setTenant] = useState<{session: Session; matched: boolean}>();
+  const base = '/b/' + encodeURIComponent(slug);
+  const restoreRequest = useRef<AbortController | null>(null);
+  const actionPending = useRef(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const loseSession = useCallback(() => {
+    setLogoutPending(false);
+    setTenant(undefined);
+    setSession(null);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     api<{display_name: string}>('/public/businesses/' + encodeURIComponent(slug), {signal: controller.signal})
-      .then(value => setBusiness(value.display_name), () => { if (!controller.signal.aborted) setBusiness(null); });
+      .then(
+        value => setBusiness({status: 'ready', name: value.display_name}),
+        failure => {
+          if (!controller.signal.aborted) setBusiness({
+            status: failure instanceof ApiError && failure.status === 404 ? 'missing' : 'error',
+          });
+        },
+      );
     return () => controller.abort();
   }, [slug]);
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || logoutPending) return;
     const controller = new AbortController();
     api('/auth/tenant-context/' + encodeURIComponent(slug), {signal: controller.signal}).then(
-      () => setTenant({session, matched: true}),
-      () => { if (!controller.signal.aborted) setTenant({session, matched: false}); },
+      () => { if (!controller.signal.aborted) setTenant({session, status: 'ready'}); },
+      failure => {
+        if (controller.signal.aborted) return;
+        if (failure instanceof ApiError && failure.status === 401) loseSession();
+        else setTenant({session, status: failure instanceof ApiError && failure.status === 404 ? 'mismatch' : 'error'});
+      },
     );
     return () => controller.abort();
-  }, [slug, session]);
+  }, [slug, session, logoutPending, loseSession]);
 
   useEffect(() => {
-    let active = true;
     const restore = () => {
+      if (actionPending.current) return;
+      restoreRequest.current?.abort();
+      const controller = new AbortController();
+      restoreRequest.current = controller;
       setSession(undefined);
-      api<Session>('/auth/me').then(
-        value => { if (active) setSession(value); },
+      setTenant(undefined);
+      api<Session>('/auth/me', {signal: controller.signal}).then(
+        value => { if (!controller.signal.aborted) setSession(value); },
         failure => {
-          if (!active) return;
+          if (controller.signal.aborted) return;
           if (!(failure instanceof ApiError && failure.status === 401)) setError('לא ניתן לבדוק את מצב הכניסה.');
           setSession(null);
         },
       );
     };
+    const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) restore(); };
+    const onPageHide = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        restoreRequest.current?.abort();
+        // Hide the cached document before the browser restores its visual state.
+        document.documentElement.classList.add('restoring');
+      }
+    };
+    const onPopState = () => {
+      setPage(window.location.pathname.split('/').slice(3).join('/'));
+      heading.current?.focus();
+    };
     restore();
-    window.addEventListener('pageshow', restore);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('popstate', onPopState);
     return () => {
-      active = false;
-      window.removeEventListener('pageshow', restore);
+      restoreRequest.current?.abort();
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('popstate', onPopState);
     };
   }, []);
 
+  useEffect(() => { document.documentElement.classList.remove('restoring'); }, [session]);
+
   useEffect(() => {
     if (!session) return;
-    const timer = window.setTimeout(() => setSession(null), Math.max(0, Date.parse(session.expires_at) - Date.now()));
-    return () => window.clearTimeout(timer);
-  }, [session]);
+    const expiry = Date.parse(session.expires_at);
+    const check = () => { if (!Number.isFinite(expiry) || Date.now() >= expiry) loseSession(); };
+    const timer = window.setTimeout(check, Math.max(0, expiry - Date.now()));
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [session, loseSession]);
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (actionPending.current) return;
     const form = event.currentTarget;
     const accessCode = new FormData(form).get('access_code');
     form.reset();
+    restoreRequest.current?.abort();
+    actionPending.current = true;
     setBusy(true);
     setError('');
     try {
+      setTenant(undefined);
+      setLogoutPending(false);
       setSession(await api<Session>('/auth/dev-session', {
         method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-CSRF-Protection': '1'},
@@ -76,38 +135,94 @@ function App() {
       setError(failure instanceof ApiError && failure.status === 429
         ? 'יותר מדי ניסיונות. אפשר לנסות שוב בהמשך.' : 'הכניסה נכשלה.');
     } finally {
+      actionPending.current = false;
       setBusy(false);
     }
   }
 
   async function logout() {
-    if (!session) return;
+    if (!session || actionPending.current) return;
+    restoreRequest.current?.abort();
+    actionPending.current = true;
     setBusy(true);
+    setLogoutPending(true);
+    setTenant(undefined);
     setError('');
     try {
       await api('/auth/session', {method: 'DELETE', headers: {'X-CSRF-Token': session.csrf_token}});
-      setSession(null);
+      loseSession();
+      setLogoutPending(false);
     } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 401) setSession(null);
+      if (failure instanceof ApiError && failure.status === 401) loseSession();
       else setError('היציאה נכשלה. ניתן לנסות שוב.');
     } finally {
+      actionPending.current = false;
       setBusy(false);
     }
   }
 
+  function navigate(target: string) {
+    window.history.pushState(null, '', base + '/' + target);
+    setPage(target);
+    heading.current?.focus();
+  }
+
+  const owner = page.startsWith('owner/');
+  const guarded = page !== '' && page !== 'login';
+  const matched = session && tenant?.session === session ? tenant.status : undefined;
+  const allowedRole = owner ? 'OWNER' : 'CUSTOMER';
+  const booking = page === 'book' || page === 'book/availability';
+  const detailId = /^(?:owner\/)?appointments\/(.+)$/.exec(page)?.[1];
+  let validDetail = true;
+  if (detailId) {
+    try { resourceId(detailId); } catch { validDetail = false; }
+  }
+
   return <main>
-    <h1><bdi>{business ?? "מספרה"}</bdi></h1>
-    {business === null && <p role="alert">המספרה אינה זמינה.</p>}
-    {session && tenant?.session === session && !tenant.matched && <p role="alert">החיבור אינו מתאים למספרה זו.</p>}
+    <header className="site-header">
+      <h1 ref={heading} tabIndex={-1}><bdi>{business?.status === 'ready' ? business.name : 'מספרה'}</bdi></h1>
+      {session && <button type="button" disabled={busy} onClick={logout}>יציאה</button>}
+    </header>
     {error && <p role="alert">{error}</p>}
-    {session === undefined ? <p role="status">בודקים את מצב הכניסה…</p>
-      : session ? <button disabled={busy} onClick={logout}>יציאה</button>
-      : business && <form onSubmit={login}>
+    {!business ? <p role="status">טוענים את פרטי המספרה…</p>
+      : business.status === 'missing' ? <p role="alert">המספרה לא נמצאה.</p>
+      : business.status === 'error' ? <p role="alert">לא ניתן לטעון את פרטי המספרה.</p>
+      : logoutPending ? <p role="status">האזור האישי מוסתר עד שהיציאה תושלם.</p>
+      : session === undefined ? <p role="status">בודקים את מצב הכניסה…</p>
+      : !session ? <form onSubmit={login}>
         <h2>כניסה לסביבת פיתוח</h2>
         <label htmlFor="access-code">קוד גישה</label>
-        <input id="access-code" name="access_code" type="password" dir="ltr" autoComplete="off" required maxLength={60}/>
+        <input id="access-code" name="access_code" type="password" dir="ltr" autoComplete="off" required minLength={60} maxLength={60}/>
         <button disabled={busy}>כניסה</button>
-      </form>}
+      </form>
+      : matched === undefined ? <p role="status">בודקים את החיבור למספרה…</p>
+      : matched === 'mismatch' ? <p role="alert">החיבור אינו מתאים למספרה זו. צאו כדי להיכנס מחדש.</p>
+      : matched === 'error' ? <p role="alert">לא ניתן לבדוק את החיבור למספרה. אפשר לרענן את הדף.</p>
+      : guarded && session.principal.role !== allowedRole ? <>
+        <p role="alert">אין הרשאה לפתוח את העמוד הזה.</p>
+        <a href={base}>חזרה לדף המספרה</a>
+      </>
+      : !validDetail ? <p role="alert">התור לא נמצא.</p>
+      : <>
+        <nav aria-label="ניווט ראשי">
+          <a href={base}>דף המספרה</a>
+          {session.principal.role === 'CUSTOMER' ? <>
+            <a href={base + '/book'}>קביעת תור</a>
+            <a href={base + '/appointments'}>התורים שלי</a>
+          </> : <>
+            <a href={base + '/owner/calendar'}>יומן</a>
+            <a href={base + '/owner/book'}>תור חדש</a>
+          </>}
+        </nav>
+        {booking ? <Customer slug={slug} availability={page === 'book/availability'} navigate={navigate}
+          onSessionLost={loseSession}/>
+          : guarded && <section>
+            <h2>{page === 'owner/calendar' ? 'יומן תורים' : page === 'appointments' ? 'התורים שלי'
+              : page === 'book/review' ? 'סקירת ההזמנה' : page === 'owner/book/customer' ? 'בחירת לקוח'
+              : page === 'owner/book' ? 'תור חדש' : 'פרטי תור'}</h2>
+            <p>המסך ייפתח לשימוש בשלב הבא של הפיתוח.</p>
+          </section>}
+      </>}
   </main>;
 }
 
