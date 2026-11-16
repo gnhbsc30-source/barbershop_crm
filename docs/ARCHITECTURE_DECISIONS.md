@@ -17,15 +17,20 @@ Stage 29 was merged via [PR #2](https://github.com/gnhbsc30-source/barbershop_cr
 regular Merge Commit `d6b4866461bab2ea13dd8a001b3101136110c26a`, verified with 167 tests.
 Its historical audit/implementation facts remain in ADR-027 through ADR-034.
 ADR-035 onward records Stage 30 decisions, without changing scheduling contracts.
-Current post-merge checkpoint (2026-11-15): Stage 30B.2 merged into `main` through
+Historical post-merge checkpoint (2026-11-15): Stage 30B.2 merged into `main` through
 [PR #4](https://github.com/gnhbsc30-source/barbershop_crm/pull/4) as regular merge commit
 `7119d95f50325812ea07b443997eca478d5d075b`, preserving all seven feature commits.
 Post-merge regression: **560 passed, 0 failed**. Reviewed PR head:
 `6de4a2d661a685c1a9e894dbf93360cb93d1759f` on retained branch
 `feature/stage-30b2-customer-booking-api`. The audit remediation checkpoint
 was `6abf95ea9918df3bf7f0a58e0eaa5235266803d1`. ADR-042 through ADR-044 remain
-the approved development MVP decisions. Stage 30B.3 has not started and the
-next milestone requires separate architectural approval.
+the approved development MVP decisions.
+
+Current Stage 30B.3 feature checkpoint (2026-11-16): audit verdict **READY FOR PR**,
+full regression **632 passed, 0 failed**. Verified implementation and audit HEAD
+`0d528faed4b9155a0be8f39dcc25013adc088ac1` on `feature/stage-30b3-owner-management-api`.
+Merge into `main` at `ffe63295d968a0ce8b9526b3640170ed3a266029` remains pending.
+Stage 30B.4 requires separate architectural approval.
 
 ## ADR-001 — Database Is the Source of Truth
 
@@ -603,7 +608,7 @@ No Stage 29 API routes, UI, Chat, or AI selection execution integration exists. 
 
 **Decision:** The approved future owner-editing/rescheduling boundary allows changing staff, date and time only. Services, customer identity, manual prices and notes are excluded from MVP rescheduling.
 
-**Status:** Approved future scope. Owner modification remains deferred. Both future customer/owner interfaces must share the real backend/development DB. Cancellation cutoffs, rescheduling/status-transition policy, owner overrides and repricing remain undecided; this ADR does not approve those policies or infer a cancellation/rescheduling command implementation.
+**Status:** Implemented on the Stage 30B.3 feature branch within this scope. See ADR-047. Both future customer/owner interfaces must share the real backend/development DB. Cancellation cutoffs, rescheduling/status-transition policy, owner overrides and repricing remain undecided; this ADR does not approve those policies or infer a cancellation/rescheduling command implementation.
 
 ---
 
@@ -632,6 +637,30 @@ No Stage 29 API routes, UI, Chat, or AI selection execution integration exists. 
 
 - After a successful commit, context expiration and ownership removal are best-effort. Errors are logged generically and preserve the successful response. If expiry fails, the claim remains closed and replay stays blocked.
 - The supported deployment remains local and single-process. Expiry cleanup is lazy, process restart loses in-memory state, and response delivery after commit can be interrupted. Shared atomic storage, cross-resource crash atomicity, production identity/HTTPS, schema migrations and timezone/DST hardening remain deferred.
+
+---
+
+## ADR-045 — OWNER Authorization and Calendar Privacy
+
+**Decision:** Fresh OWNER authentication supplies tenant scope for all seven routes. POST and PATCH also require session-bound CSRF and reject duplicate JSON members. The existing local Host, Origin, cookie and session protections apply.
+
+Calendar reads use half-open windows of at most 31 days, optional staff filtering including inactive staff, and a scope-bound cursor ordered by start and appointment ID. Appointment rows and batched items share one read snapshot. Calendar shows customer names. Only customer lookup and appointment detail expose phone. A move between pages may change pagination.
+
+---
+
+## ADR-046 — Atomic Guest Booking and Development Restart
+
+**Decision:** Existing and GUEST bookings use exact ILS confirmation and fresh policy and availability checks. An existing customer must remain active in the write transaction. Guest booking uses one write transaction for the exact same-tenant phone check, active GUEST insert, shared booking logic and complete HTTP 201, Location and ETag preparation. Failure rolls back all writes.
+
+Guests receive no login account or credentials. Startup validates the pinned seed rows and account relationships and allows additional accountless GUEST rows. Unexpected registered customers, added accounts and seed tampering still fail closed. The manifest format and schema are unchanged.
+
+---
+
+## ADR-047 — Conditional Owner Moves and Booked Snapshots
+
+**Decision:** An OWNER may move a future BOOKED appointment only by staff, date or start time. Require one strong If-Match ETag and recheck it under the write lock. Real moves advance the UTC revision monotonically, including during rapid writes or clock rollback. A matching no-op leaves the revision intact. Invalid or exhausted stored revisions produce a sanitized configuration error.
+
+Validate the exact interval using booked duration, active compatible destination staff and services, and existing booking policies. Exclude only the moved appointment from overlap checks. Preserve customer, status, notes and all booked item snapshots. Render the complete response before commit. The local single-process MVP uses in-memory sessions and search state, requires the Asia/Jerusalem scheduling clock, and defers DST hardening. A disconnect can prevent delivery after commit.
 
 ---
 
